@@ -5,4 +5,7 @@ WriteMakefile(
     'INSTALLDIRS' => 'perl',
     'NAME'	=> 'Devel::ptkdb',
     'VERSION_FROM' => 'ptkdb.pm', # finds $VERSION
+	PREREQ_PM => {
+		'Tk' => 0,
+    },
 );
