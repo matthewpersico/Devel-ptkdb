@@ -840,7 +840,9 @@ sub BEGIN {
     @Devel::ptkdb::step_in_keys   = ( '<Shift-F9>', '<Alt-s>', '<Button-3>' );          # step into a subroutine
     @Devel::ptkdb::step_over_keys = ( '<F9>',       '<Alt-n>', '<Shift-Button-3>' );    # step over a subroutine
     @Devel::ptkdb::return_keys    = ( '<Alt-u>',    '<Control-Button-3>' );             # return from a subroutine
-                                                                                        # ALT-B brings up a menu # @Devel::ptkdb::toggle_breakpt_keys = ('<Alt-b>');                                        # set or unset a breakpoint
+
+    # ALT-B brings up a menu
+    # @Devel::ptkdb::toggle_breakpt_keys = ('<Alt-b>'); # set or unset a breakpoint
 
     # Fonts used in the displays
 
