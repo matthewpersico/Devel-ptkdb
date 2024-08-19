@@ -1,5 +1,8 @@
 package DB;
 
+use strict;
+use warnings;
+
 ##
 ## Expedient fix for perl 5.8.0.  True DB::DB is further down.
 ##
@@ -2811,9 +2814,27 @@ sub insertExpr {
     $dl->add( $dirPath . $name, -text => "$name = " . "$theRef" );
     $result = 1;
 
-    foreach $r ( @$theRef{@theKeys} ) {    # slice out the values with the sorted list
+    my %builtins = (
+        SCALAR  => 1,
+        ARRAY   => 1,
+        HASH    => 1,
+        CODE    => 1,
+        REF     => 1,
+        GLOB    => 1,
+        LVALUE  => 1,
+        FORMAT  => 1,
+        IO      => 1,
+        VSTRING => 1,
+        Regexp  => 1
+    );
 
-        if ( grep $_ == $r, @$reusedRefs ) {    # check to make sure that we're not doing a single level self reference
+    foreach $r ( @$theRef{@theKeys} ) {    # slice out the values with the sorted list
+        if (
+            grep {
+                ( $builtins{ ref($_) } ? $_ : ref($_) ) == ( $builtins{ ref($r) } ? $r : ref($r) )
+            } @$reusedRefs
+          )
+        {                                  # check to make sure that we're not doing a single level self reference
             eval {
                 $dl->add(
                     $dirPath
