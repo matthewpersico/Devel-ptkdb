@@ -3,11 +3,9 @@ package DB;
 use strict;
 use warnings;
 
-##
-## Expedient fix for perl 5.8.0.  True DB::DB is further down.
-##
-##
-sub DB { }
+## These shut up perl -c
+my $dummy = $DB::usethreads;
+$dummy = $DB::clearSub;
 
 use Tk;
 
@@ -839,10 +837,10 @@ sub BEGIN {
     $Devel::ptkdb::pathSep            = '\x00';
     $Devel::ptkdb::pathSepReplacement = "\0x01";
 
-    @Devel::ptkdb::step_in_keys        = ( '<Shift-F9>', '<Alt-s>', '<Button-3>' );          # step into a subroutine
-    @Devel::ptkdb::step_over_keys      = ( '<F9>',       '<Alt-n>', '<Shift-Button-3>' );    # step over a subroutine
-    @Devel::ptkdb::return_keys         = ( '<Alt-u>',    '<Control-Button-3>' );             # return from a subroutine
-    @Devel::ptkdb::toggle_breakpt_keys = ('<Alt-b>');                                        # set or unset a breakpoint
+    @Devel::ptkdb::step_in_keys   = ( '<Shift-F9>', '<Alt-s>', '<Button-3>' );          # step into a subroutine
+    @Devel::ptkdb::step_over_keys = ( '<F9>',       '<Alt-n>', '<Shift-Button-3>' );    # step over a subroutine
+    @Devel::ptkdb::return_keys    = ( '<Alt-u>',    '<Control-Button-3>' );             # return from a subroutine
+                                                                                        # ALT-B brings up a menu # @Devel::ptkdb::toggle_breakpt_keys = ('<Alt-b>');                                        # set or unset a breakpoint
 
     # Fonts used in the displays
 
@@ -2829,11 +2827,8 @@ sub insertExpr {
     );
 
     foreach $r ( @$theRef{@theKeys} ) {    # slice out the values with the sorted list
-        if (
-            grep {
-                ( $builtins{ ref($_) } ? $_ : ref($_) ) == ( $builtins{ ref($r) } ? $r : ref($r) )
-            } @$reusedRefs
-          )
+        if ( grep { ( $builtins{ ref($_) } ? $_ : \$_ ) eq ( $builtins{ ref($r) } ? $r : \$r ) }
+            @$reusedRefs )
         {                                  # check to make sure that we're not doing a single level self reference
             eval {
                 $dl->add(
