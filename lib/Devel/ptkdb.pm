@@ -764,6 +764,19 @@ require Tk::Table;
 use vars qw(@dbline);
 
 use Config;
+my %builtins = (
+    SCALAR  => 1,
+    ARRAY   => 1,
+    HASH    => 1,
+    CODE    => 1,
+    REF     => 1,
+    GLOB    => 1,
+    LVALUE  => 1,
+    FORMAT  => 1,
+    IO      => 1,
+    VSTRING => 1,
+    Regexp  => 1
+);
 
 sub DoBugReport {
     my ($str)      = 'sourceforge.net/tracker/?atid=437609&group_id=43854&func=browse';
@@ -2767,7 +2780,10 @@ sub insertExpr {
         $result = 1;
         foreach $r ( @{$theRef} ) {
 
-            if ( grep $_ == $r, @$reusedRefs ) {    # check to make sure that we're not doing a single level self reference
+            # check to make sure that we're not doing a single level self reference
+            if ( grep { ( $builtins{ ref($_) } ? $_ : \$_ ) eq ( $builtins{ ref($r) } ? $r : \$r ) }
+                @$reusedRefs )
+            {
                 eval {
                     $dl->add(
                         $dirPath
@@ -2814,24 +2830,12 @@ sub insertExpr {
     $dl->add( $dirPath . $name, -text => "$name = " . "$theRef" );
     $result = 1;
 
-    my %builtins = (
-        SCALAR  => 1,
-        ARRAY   => 1,
-        HASH    => 1,
-        CODE    => 1,
-        REF     => 1,
-        GLOB    => 1,
-        LVALUE  => 1,
-        FORMAT  => 1,
-        IO      => 1,
-        VSTRING => 1,
-        Regexp  => 1
-    );
-
     foreach $r ( @$theRef{@theKeys} ) {    # slice out the values with the sorted list
+
+        # check to make sure that we're not doing a single level self reference
         if ( grep { ( $builtins{ ref($_) } ? $_ : \$_ ) eq ( $builtins{ ref($r) } ? $r : \$r ) }
             @$reusedRefs )
-        {                                  # check to make sure that we're not doing a single level self reference
+        {
             eval {
                 $dl->add(
                     $dirPath
@@ -3827,7 +3831,7 @@ sub checkdbline($$) {
 
     return 0 unless $fname;    # we're getting an undef here on 'Restart...'
 
-    local ($^W)     = 0;                          # spares us warnings under -w
+    no warnings 'misc';        # spares us warnings under use warnings and -w
     local (*dbline) = $main::{ '_<' . $fname };
 
     my $flag = $dbline[$lineno] != 0;
