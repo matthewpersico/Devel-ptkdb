@@ -1,7 +1,11 @@
-README
 Changes
-MANIFEST
+lib/Devel/ptkdb.pm
 Makefile.PL
-ptkdb.pm
-test.pl
-META.yml                                 Module meta-data (added by MakeMaker)
+MANIFEST                        #This list of files
+README
+t/00.load.t
+t/perlcritic.t
+.perltidyrc
+t/tidy.t
+META.json # Will be created by 'make dist'
+META.yml  # Will be created by 'make dist'

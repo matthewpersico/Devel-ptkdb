@@ -1,0 +1,43 @@
+# Follow basic PBP guidelines
+-pbp
+
+#...except as follows...
+
+# Format to 100 columns
+-l=100
+
+# Continuation indent is 4 columns
+-ci=4
+
+# Break after all arrow-then-comma sequences (except in one-liners)
+-cab=1
+
+# Opening brace ALWAYS on the right
+-bar
+
+# Don't outdent labels
+-nola
+
+# Preserve all comma breaks in lists (i.e. I'll format them myself)
+-boc
+
+# Tighter parens and square brackets...
+-pt=2
+-sbt=2
+
+# "} else", not "}\nelse".
+--cuddled-else
+
+# Do NOT force a blank line before a full line comment.
+--noblanks-before-comments
+
+# Do not count the side comment in line-length calcs; comments won't cause line
+# breaks.
+--ignore-side-comment-lengths
+
+# DON'T left slam long strings.
+-nolq
+
+# Turn off aligning qw() for multiple 'use' statements. Was turned on by
+# default in perltidy 20220613.
+-vxl='q'
