@@ -1,20 +1,21 @@
 package Devel::ptkdb;    # This package is the main_window object for the
-                         # debugger.  We start with the Devel:: prefix because we
+                         # debugger. We start with the Devel:: prefix because we
                          # want to install it with the DB:: package that is
                          # required to be in a Devel/ subdir of a directory in the
                          # @INC set.
 
-## no critic TestingAndDebugging::ProhibitNoStrict
+## no critic TestingAndDebugging::ProhibitNoStrict - code before any "strict",
+## in this case, none.
 our $VERSION = '1.1091';
 1;
 
-# We switch to package DB just to get these vars defined here.
+# We switch to package DB here get these vars defined. We use vars and not our because we want them seen in every package in this file and it is easier to use vars becaus we don not here.
 package DB;
 
 use strict;
 use warnings;
 
-## These shut up perl -c
+# These shut up perl -c
 my $dummy = $DB::usethreads;
 $dummy = $DB::clearSub;
 
@@ -22,18 +23,18 @@ use vars qw($VERSION @dbline %dbline);
 
 package Devel::ptkdb;    # This package is the main_window object for the
 
-##
-## do this check once, rather than repeating the string comparison again and again
-##
+#
+# do this check once, rather than repeating the string comparison again and again
+#
 
 my $isWin32 = $^O eq 'MSWin32';
 
 require 5.004;
 
-##
-## Perform a check to see if we have the Tk library, if not, attempt
-## to load it for the user
-##
+#
+# Perform a check to see if we have the Tk library, if not, attempt
+# to load it for the user
+#
 
 sub BEGIN {
 
@@ -113,10 +114,10 @@ sub DoBugReport {
         return if ($? == 0);
     }
 
-    print "##\n";
-    print "## Please submit a bug report through the following URL:\n";
-    print '##    http://sourceforge.net/tracker/?atid=437609&group_id=43854&func=browse', "\n";
-    print "##\n";
+    print "#\n";
+    print "# Please submit a bug report through the following URL:\n";
+    print '#    http://sourceforge.net/tracker/?atid=437609&group_id=43854&func=browse', "\n";
+    print "#\n";
 }
 
 #
@@ -248,10 +249,10 @@ sub BEGIN {
 
 }    # end of BEGIN
 
-##
-## subroutine provided to the user for initializing
-## files in .ptkdbrc
-##
+#
+# subroutine provided to the user for initializing
+# files in .ptkdbrc
+#
 sub brkpt {
     my ($fName, @idx) = @_;
     my ($offset);
@@ -345,9 +346,9 @@ sub textTagConfigure {
 
 }    # end of textTagConfigure
 
-##
-## Change the tabs in the text field
-##
+#
+# Change the tabs in the text field
+#
 sub setTabs {
 
     $DB::window->{'text'}->configure(-tabs => [@_]);
@@ -364,18 +365,18 @@ sub add_exprs {
         map { 'expr' => $_, 'depth' => $Devel::ptkdb::expr_depth }, @_;
 }    # end of add_exprs
 
-##
-## register a subroutine reference that will be called whenever
-## ptkdb sets up it's windows
-##
+#
+# register a subroutine reference that will be called whenever
+# ptkdb sets up it's windows
+#
 sub register_user_window_init {
     push @{ $DB::window->{'user_window_init_list'} }, @_;
 }    # end of register_user_window_init
 
-##
-## register a subroutine reference that will be called whenever
-## ptkdb enters from code
-##
+#
+# register a subroutine reference that will be called whenever
+# ptkdb enters from code
+#
 sub register_user_DB_entry {
     push @{ $DB::window->{'user_window_DB_entry_list'} }, @_;
 }    # end of register_user_DB_entry
@@ -1213,7 +1214,7 @@ sub change_breakpoint_tag {
 #
 # God Forbid anyone comment something complex and tightly optimized.
 #
-#  We can get a list of the subroutines from the interpreter
+# We can get a list of the subroutines from the interpreter
 # by querrying the *DB::sub typeglob:  keys %DB::sub
 #
 # The list appears broken down by module:
@@ -1736,7 +1737,7 @@ sub brkPtCheckbutton {
 # insert a breakpoint control into our breakpoint list.
 # returns a handle to the control
 #
-#  Expression, if defined, is to be evaluated at the breakpoint
+# Expression, if defined, is to be evaluated at the breakpoint
 # and execution stopped if it is non-zero/defined.
 #
 # If action is defined && True then it will be evalled
@@ -2026,16 +2027,16 @@ sub fixExprPath {
 
 }    # end of fixExprPath
 
-##
-##  Inserts an expression($theRef) into an HList Widget($dl).  If the expression
-## is an array, blessed array, hash, or blessed hash(typical object), then this
-## routine is called recursively, adding the members to the next level of heirarchy,
-## prefixing array members with a [idx] and the hash members with the key name.
-## This continues until the entire expression is decomposed to it's atomic constituents.
-## Protection is given(with $reusedRefs) to ensure that 'circular' references within
-## arrays or hashes(i.e. where a member of a array or hash contains a reference to a
-## parent element within the heirarchy.
-##
+#
+# Inserts an expression($theRef) into an HList Widget($dl).  If the expression
+# is an array, blessed array, hash, or blessed hash(typical object), then this
+# routine is called recursively, adding the members to the next level of heirarchy,
+# prefixing array members with a [idx] and the hash members with the key name.
+# This continues until the entire expression is decomposed to it's atomic constituents.
+# Protection is given(with $reusedRefs) to ensure that 'circular' references within
+# arrays or hashes(i.e. where a member of a array or hash contains a reference to a
+# parent element within the heirarchy.
+#
 #
 # Returns 1 if sucessfully added 0 if not
 #
@@ -2701,16 +2702,16 @@ sub updateEvalWindow {
     }
 }    # end of updateEvalWindow
 
-##
-## converts non printable chars to '.' for a string
-##
+#
+# converts non printable chars to '.' for a string
+#
 sub printablestr {
     return join "", map { (ord($_) >= 32 && ord($_) < 127) ? $_ : '.' } split //, $_[0];
 }
 
-##
-## hex dump utility function
-##
+#
+# hex dump utility function
+#
 sub hexDump {
     my (@retList);
     my ($width) = 8;
@@ -3029,9 +3030,9 @@ sub BEGIN {
 
 }
 
-##
-## Save the ptkdb state file and restart the debugger
-##
+#
+# Save the ptkdb state file and restart the debugger
+#
 sub DoRestart {
     my ($fname);
 
@@ -3047,9 +3048,9 @@ sub DoRestart {
 
     $ENV{'PTKDB_RESTART_STATE_FILE'} = $fname;
 
-    ##
-    ## build up the command to do the restart
-    ##
+    #
+    # build up the command to do the restart
+    #
 
     $fname = "perl -w -d:ptkdb $Devel::ptkdb::scriptName @Devel::ptkdb::script_args";
 
@@ -3059,11 +3060,11 @@ sub DoRestart {
 
 }    # end of DoRestart
 
-##
-## Enables/Disables the feature where we stop
-## if we've encountered a perl warning such as:
-## "Use of uninitialized value at undef_warn.pl line N"
-##
+#
+# Enables/Disables the feature where we stop
+# if we've encountered a perl warning such as:
+# "Use of uninitialized value at undef_warn.pl line N"
+#
 
 sub stop_on_warning_cb {
     &$DB::ptkdb::warn_sig_save() if $DB::ptkdb::warn_sig_save;    # call any previously registered warning
@@ -3080,9 +3081,9 @@ sub set_stop_on_warning {
         $DB::ptkdb::warn_sig_save = $SIG{'__WARN__'} if $SIG{'__WARN__'};
         $SIG{'__WARN__'} = \&stop_on_warning_cb;
     } else {
-        ##
-        ## Restore any previous warning signal
-        ##
+        #
+        # Restore any previous warning signal
+        #
         local ($^W) = 0;
         $SIG{'__WARN__'} = $DB::ptkdb::warn_sig_save;
     }
@@ -3356,9 +3357,9 @@ sub Initialize {
     if (   $ENV{'PTKDB_RESTART_STATE_FILE'}
         && $Devel::ptkdb::DataDumperAvailable
         && -e $ENV{'PTKDB_RESTART_STATE_FILE'}) {
-        ##
-        ## Restore expressions and breakpoints in state file
-        ##
+        #
+        # Restore expressions and breakpoints in state file
+        #
         $DB::window->restoreStateFile($ENV{'PTKDB_RESTART_STATE_FILE'});
         unlink $ENV{'PTKDB_RESTART_STATE_FILE'};    # delete state file
 
@@ -3648,13 +3649,13 @@ sub dbexit {
 # Refs:  Progamming Perl 2nd Edition, Larry Wall, O'Reilly & Associates, Chapter 8
 #
 
-##
-## Since perl 5.8.0 we need to predeclare the sub DB{} at the start of the
-## package or else the compilation fails.  We need to disable warnings though
-## since in 5.6.x we get warnings on the sub DB begin redeclared.  Using
-## local($^W) = 0 will leave warnings disabled for the rest of the compile
-## and we don't want that.
-##
+#
+# Since perl 5.8.0 we need to predeclare the sub DB{} at the start of the
+# package or else the compilation fails.  We need to disable warnings though
+# since in 5.6.x we get warnings on the sub DB begin redeclared.  Using
+# local($^W) = 0 will leave warnings disabled for the rest of the compile
+# and we don't want that.
+#
 my ($saveW);
 
 sub BEGIN {
@@ -3840,12 +3841,12 @@ sub DB {
     $DB::on = 0;
 }    # end of DB
 
-##
-## in this case we do not use local($^W) since we would like warnings
-## to be issued past this point, and the localized copy of $^W will not
-## go out of scope until  the end of compilation
-##
-##
+#
+# in this case we do not use local($^W) since we would like warnings
+# to be issued past this point, and the localized copy of $^W will not
+# go out of scope until  the end of compilation
+#
+#
 
 #
 # This is another place where we'll try and keep the
