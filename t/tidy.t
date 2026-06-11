@@ -40,12 +40,17 @@ my @files = map {
 close $fh;
 
 my @perl_files = grep { is_perl_code($_) } @files;
-
+my @tidy_files = map  {"${_}.tdy"} @perl_files;
+push @tidy_files, map { my $x = $_; $x =~ s|/lib/|/blib/lib/|; $x } grep {m|/lib/|} @tidy_files;
+# In case there were left overs from the last run.
+unlink @tidy_files;
 my $argv = join(
     ' ',
     "--pro=$FindBin::Bin/../.perltidyrc", '--assert-tidy',
     '-nst',    ## Turns off the -st in -pbp in perltidyrc
     @perl_files
 );
-is(Perl::Tidy::perltidy(argv => $argv), 0, "tidy");
+if (is(Perl::Tidy::perltidy(argv => $argv), 0, "tidy")) {
+    unlink @tidy_files;
+}
 done_testing();

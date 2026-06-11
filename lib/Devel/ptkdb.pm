@@ -1,185 +1,119 @@
-package Devel::ptkdb;    # This package is the main_window object for the
-                         # debugger. We start with the Devel:: prefix because we
-                         # want to install it with the DB:: package that is
-                         # required to be in a Devel/ subdir of a directory in the
-                         # @INC set.
+## no critic (Modules::RequireFilenameMatchesPackage)
+package DB;    # We start with package DB here so that these vars are
+               # defined. We "use vars" and not "our" because there is some
+               # debugger black magic going on that I do not understand yet;
+               # changing to "our" breaks the code.
+use strict;
+use warnings;
+use vars qw(@dbline %dbline );
 
-## no critic TestingAndDebugging::ProhibitNoStrict - code before any "strict",
-## in this case, none.
-our $VERSION = '1.1091';
-1;
+use Carp;
 
-# We switch to package DB here get these vars defined. We use vars and not our because we want them seen in every package in this file and it is easier to use vars becaus we don not here.
-package DB;
+sub DB { };    ## Or else if failes to compile in Perl 5.8
+
+package Devel::ptkdb;    # This package is the main_window object for the debugger
+
+# This is a REALLY old version of Perl, but unless we REALLY need to break
+# this, we won't.
+require 5.004;
 
 use strict;
 use warnings;
 
-# These shut up perl -c
-my $dummy = $DB::usethreads;
-$dummy = $DB::clearSub;
-
-use vars qw($VERSION @dbline %dbline);
-
-package Devel::ptkdb;    # This package is the main_window object for the
-
 #
-# do this check once, rather than repeating the string comparison again and again
+# CPAN modules
 #
-
-my $isWin32 = $^O eq 'MSWin32';
-
-require 5.004;
-
-#
-# Perform a check to see if we have the Tk library, if not, attempt
-# to load it for the user
-#
-
-sub BEGIN {
-
-    eval { require Tk; };
-    if ($@) {
-        print <<"__PTKDBTK_INSTALL__";
-***
-*** The PerlTk library could not be found.  Ptkdb requires the PerlTk library.
-***
-Preferably Tk800.015 or better:
-
-In order to install this the following conditions must be met:
-
-1.  You have to have access to a C compiler.
-2.  You must have sufficient permissions to install the libraries on your system.
-
-To install PerlTk:
-
-a  Download the Tk library source from http://www.perl.com/CPAN/modules/by-category/08_User_Interfaces/Tk
-b  Uncompress the archive and run "perl Makefile.PL"
-c  run "make install"
-
-   If this process completes successfully ptkdb should be operational now.
-
-We can attempt to run the CPAN module for you.  This will, after some questions, download
-and install the Tk library automatically.
-
-Would you like to run the CPAN module? (y/n)
-__PTKDBTK_INSTALL__
-
-        my $answer = <STDIN>;
-        chomp $answer;
-        if ($answer =~ /y|yes/i) {
-            require CPAN;
-            CPAN::install Tk;
-        }    # if
-
-    }    # if $@
-
-}    # end of sub BEGIN
-
-use Tk 800;
+use Carp qw(cluck carp);
+use Config;
+use Cwd qw(realpath);
 use Data::Dumper;
 use FileHandle;
+use Tk;
+use Tk::Dialog;
+use Tk::TextUndo;
+use Tk::ROText;
+use Tk::NoteBook;
+use Tk::HList;
+use Tk::Table;
 
-require Tk::Dialog;
-require Tk::TextUndo;
-require Tk::ROText;
-require Tk::NoteBook;
-require Tk::HList;
-require Tk::Table;
+#
+# Data
+#
+use vars qw(@dbline);    # Again, this breaks code if changed to "our".
+my $isWin32 = $^O eq 'MSWin32';
+our $VERSION = "2.0.0";
 
-use vars qw(@dbline);
-
-use Config;
-
-sub DoBugReport {
-    my ($str)      = 'sourceforge.net/tracker/?atid=437609&group_id=43854&func=browse';
-    my (@browsers) = qw/netscape mozilla/;
-    my ($fh, $pid, $sh);
-
-    if ($isWin32) {
-        $sh       = '';
-        @browsers = '"' . $ENV{'PROGRAMFILES'} . '\\Internet Explorer\\IEXPLORE.EXE' . '"';
-
-    } else {
-        $sh  = 'sh';
-        $str = "\'http://" . $str . "\'";
-    }
-
-    $fh = new FileHandle();
-
-    for (@browsers) {
-        $pid = open($fh, "$sh $_ $str 2&> /dev/null |");
-        sleep(2);
-        waitpid $pid, 0;
-        return if ($? == 0);
-    }
-
-    print "#\n";
-    print "# Please submit a bug report through the following URL:\n";
-    print '#    http://sourceforge.net/tracker/?atid=437609&group_id=43854&func=browse', "\n";
-    print "#\n";
+# We define console_say, debug_say and debug_dump here so they can be used in
+# BEGIN. We will also inject these into the DB namespace further down. If you
+# add any functions that you want available in DB as well as Devel::ptkdb
+# namespaces, go find the '# Inject' tag below and do so.
+sub console_prompt {
+    sprintf(
+        "ptkdb> %s \n",
+        join("\n ", map { split(/\n/, $_) } @_)
+    );
 }
 
-#
-# Check to see if the package actually
-# exists. If it does import the routines
-# and return a true value ;
-#
-# NOTE:  this needs to be above the 'BEGIN' subroutine,
-# otherwise it will not have been compiled by the time
-# that it is called by sub BEGIN.
-#
-sub check_avail {
-    my ($mod, @list) = @_;
+sub console_say {
+    print(qq(\n), console_prompt(@_));
+}
 
-    eval {
-        require $mod;
-        import $mod @list;
-    };
+sub debug_say {
+    my @msg = @_;
+    console_say(@msg);
+    {
+        local $Carp::Verbose = 1;
+        carp();
+    }
+}
 
-    return 0 if $@;
-    return 1;
-
-}    # end of check_avail
+sub debug_dump {
+    my @dumps = @_;
+    my @msg;
+    {
+        no strict 'refs';    ## no critic (TestingAndDebugging::ProhibitNoStrict)
+        for my $dump (@dumps) {
+            $dump->{desc} = (
+                  $dump->{desc}
+                ? $dump->{desc} . ': '
+                : q()
+            );
+            push @msg, $dump->{desc} . Data::Dumper->Dump([$dump->{ref}], ['*' . $dump->{name}]),
+                "\n";
+        }
+    }
+    console_say(@msg);
+    {
+        local $Carp::Verbose = 1;
+        carp();
+    }
+}
 
 sub BEGIN {
-
-    $DB::on = 0;
-
+    console_say(q(Devel::ptkdb BEGIN...)) if (not $^C);
+    $DB::on               = 0;
     $DB::subroutine_depth = 0;    # our subroutine depth counter
     $DB::step_over_depth  = -1;
 
-    #
-    # the bindings and font specs for these operations have been placed here
-    # to make them accessible to people who might want to customize the
-    # operations.  REF The 'bind.html' file, included in the perlTk FAQ has
-    # a fairly good explanation of the binding syntax.
-    #
+    # The bindings and font specs for these operations have been placed here to
+    # make them accessible to people who might want to customize the
+    # operations.  REF The 'bind.html' file, included in the perlTk FAQ has a
+    # fairly good explanation of the binding syntax.
 
     #
-    # These lists of key bindings will be applied
-    # to the "Step In", "Step Out", "Return" Commands
+    # These lists of key bindings will be applied to the "Step In", "Step Out",
+    # "Return" Commands.
     #
     $Devel::ptkdb::pathSep            = '\x00';
     $Devel::ptkdb::pathSepReplacement = "\0x01";
-
-    @Devel::ptkdb::step_in_keys   = ('<Shift-F9>', '<Alt-s>', '<Button-3>');          # step into a subroutine
-    @Devel::ptkdb::step_over_keys = ('<F9>',       '<Alt-n>', '<Shift-Button-3>');    # step over a subroutine
-    @Devel::ptkdb::return_keys    = ('<Alt-u>',    '<Control-Button-3>');             # return from a subroutine
+    @Devel::ptkdb::step_in_keys       = ('<Shift-F9>', '<Alt-s>', '<Button-3>');          # step into a subroutine
+    @Devel::ptkdb::step_over_keys     = ('<F9>',       '<Alt-n>', '<Shift-Button-3>');    # step over a subroutine
+    @Devel::ptkdb::return_keys        = ('<Alt-u>',    '<Control-Button-3>');             # return from a subroutine
 
     # ALT-B brings up a menu
     # @Devel::ptkdb::toggle_breakpt_keys = ('<Alt-b>'); # set or unset a breakpoint
 
     # Fonts used in the displays
-
-    #
-    # NOTE:   The environmental variable syntax here works like this:
-    # $ENV{'NAME'} accesses the environmental variable "NAME"
-    #
-    # $ENV{'NAME'} || 'string' results in  $ENV{'NAME'} or 'string' if  $ENV{'NAME'} is not defined.
-    #
-    #
-
     @Devel::ptkdb::button_font
         = $ENV{'PTKDB_BUTTON_FONT'} ? ("-font" => $ENV{'PTKDB_CODE_FONT'}) : ();    # font for buttons
     @Devel::ptkdb::code_text_font
@@ -220,38 +154,56 @@ sub BEGIN {
     $Devel::ptkdb::add_expr_depth = 1;    # how much further to expand an expression when clicked
 
     $Devel::ptkdb::linenumber_format = $ENV{'PTKDB_LINENUMBER_FORMAT'} || "%05d ";
-    $Devel::ptkdb::linenumber_length = 5;
-
+    $Devel::ptkdb::linenumber_length = 5;                                                     # If you have more than 99,999 lines
+                                                                                              # in any one file, you're doing
+                                                                                              # something wrong!
     $Devel::ptkdb::linenumber_offset = length sprintf($Devel::ptkdb::linenumber_format, 0);
     $Devel::ptkdb::linenumber_offset -= 1;
 
-    #
-    # Check to see if "Data Dumper" is available
-    # if it is we can save breakpoints and other
-    # various "functions". This call will also
-    # load the subroutines needed.
-    #
-    $Devel::ptkdb::DataDumperAvailable  = 1;                                    # assuming that it is now
+    $Devel::ptkdb::DataDumperAvailable  = 1;                                                  # assuming that it is now
     $Devel::ptkdb::useDataDumperForEval = $Devel::ptkdb::DataDumperAvailable;
 
-    #
     # DB Options (things not directly involving the window)
-    #
 
     # Flag to disable us from intercepting $SIG{'INT'}
 
     $DB::sigint_disable = defined $ENV{'PTKDB_SIGINT_DISABLE'} && $ENV{'PTKDB_SIGINT_DISABLE'};
-    #
-    # Possibly for debugging perl CGI Web scripts on
-    # remote machines.
-    #
-    $ENV{'DISPLAY'} = $ENV{'PTKDB_DISPLAY'} if exists $ENV{'PTKDB_DISPLAY'};
 
-}    # end of BEGIN
+    # Possibly for debugging perl CGI Web scripts on remote machines.
+    $ENV{'DISPLAY'} = $ENV{'PTKDB_DISPLAY'} if exists $ENV{'PTKDB_DISPLAY'};
+}
+
+sub DoBugReport {
+    my ($str)      = 'sourceforge.net/tracker/?atid=437609&group_id=43854&func=browse';
+    my (@browsers) = qw/netscape mozilla/;
+    my ($fh, $pid, $sh);
+
+    if ($isWin32) {
+        $sh       = '';
+        @browsers = '"' . $ENV{'PROGRAMFILES'} . '\\Internet Explorer\\IEXPLORE.EXE' . '"';
+
+    } else {
+        $sh  = 'sh';
+        $str = "\'http://" . $str . "\'";
+    }
+
+    $fh = new FileHandle();
+
+    for (@browsers) {
+        $pid = open($fh, "$sh $_ $str 2&> /dev/null |");
+        sleep(2);
+        waitpid $pid, 0;
+        return if ($? == 0);
+    }
+
+    print "#\n";
+    print "# Please submit a bug report through the following URL:\n";
+    print '#    http://sourceforge.net/tracker/?atid=437609&group_id=43854&func=browse', "\n";
+    print "#\n";
+}
 
 #
-# subroutine provided to the user for initializing
-# files in .ptkdbrc
+# Subroutine provided to the user for initializing files in '.ptkdbrc'
 #
 sub brkpt {
     my ($fName, @idx) = @_;
@@ -268,7 +220,7 @@ sub brkpt {
         }
         $DB::window->insertBreakpoint($fName, $_, 1);    # insert a simple breakpoint
     }
-}    # end of brkpt
+}
 
 #
 # Set conditional breakpoint(s)
@@ -289,9 +241,9 @@ sub condbrkpt {
             next;
         }
         $DB::window->insertBreakpoint($fname, $index, 1, $expr);    # insert a simple breakpoint
-    }    # end of arg loop
+    }
 
-}    # end of conditionalbrkpt
+}
 
 sub brkonsub {
     my (@names) = @_;
@@ -312,9 +264,9 @@ sub brkonsub {
             $DB::window->insertBreakpoint($1, $_, 1);
             last;                                      # only need the one breakpoint
         }
-    }    # end of name loop
+    }
 
-}    # end of brkonsub
+}
 
 #
 # set breakpoints on subroutines matching a regular
@@ -330,11 +282,11 @@ sub brkonsub_regex {
     for my $regexp (@regexps) {
         study $regexp;
         push @subList, grep /$regexp/, keys %DB::sub;
-    }    # end of brkonsub_regex
+    }
 
     brkonsub(@subList);    # set breakpoints on matching subroutines
 
-}    # end of brkonsub_regex
+}
 
 #
 # Allow the user Access to our tag configurations
@@ -344,7 +296,7 @@ sub textTagConfigure {
 
     $DB::window->{'text'}->tagConfigure($tag, @config);
 
-}    # end of textTagConfigure
+}
 
 #
 # Change the tabs in the text field
@@ -363,7 +315,7 @@ sub setTabs {
 sub add_exprs {
     push @{ $DB::window->{'expr_list'} },
         map { 'expr' => $_, 'depth' => $Devel::ptkdb::expr_depth }, @_;
-}    # end of add_exprs
+}
 
 #
 # register a subroutine reference that will be called whenever
@@ -371,7 +323,7 @@ sub add_exprs {
 #
 sub register_user_window_init {
     push @{ $DB::window->{'user_window_init_list'} }, @_;
-}    # end of register_user_window_init
+}
 
 #
 # register a subroutine reference that will be called whenever
@@ -379,11 +331,11 @@ sub register_user_window_init {
 #
 sub register_user_DB_entry {
     push @{ $DB::window->{'user_window_DB_entry_list'} }, @_;
-}    # end of register_user_DB_entry
+}
 
 sub get_notebook_widget {
     return $DB::window->{'notebook'};
-}    # end of get_notebook_widget
+}
 
 #
 # Run files provided by the user
@@ -451,7 +403,7 @@ sub new {
 
     return $self;
 
-}    # end of new
+}
 
 sub setup_main_window {
     my ($self) = @_;
@@ -568,7 +520,7 @@ sub DoOpen {
         @Devel::ptkdb::button_font,
         -command => sub { destroy $topLevel; }
     )->pack(-side => 'left', -fill => 'both', -expand => 1);
-}    # end of DoOpen
+}
 
 sub do_tabs {
     my ($tabs_str);
@@ -758,7 +710,7 @@ sub setup_menu_bar {
             -command      => \&set_stop_on_warning
         ]
 
-    ];    # end of control menu items
+    ];
 
     $self->{control_menu_button} = $mb->Menubutton(
         -text      => 'Control',
@@ -930,7 +882,7 @@ sub setup_menu_bar {
         'run_to_button', 'breakpt_button'
         };
 
-}    # end of setup_menu_bar
+}
 
 sub edit_bookmarks {
     my ($self) = @_;
@@ -962,7 +914,7 @@ sub edit_bookmarks {
 
     $list->insert('end', @{ $self->{'bookmarks'} });
 
-}    # end of edit_bookmarks
+}
 
 sub setup_bookmarks_menu {
     my ($self) = @_;
@@ -999,7 +951,7 @@ sub setup_bookmarks_menu {
 
     $self->add_bookmark_items(@$ptkdb_bookmarks);
 
-}    # end of setup_bookmarks_menu
+}
 
 #
 # $item = "$fname:$lineno"
@@ -1018,7 +970,7 @@ sub add_bookmark_items {
         );
         push @{ $self->{'bookmarks'} }, $item;
     }
-}    # end of add_bookmark_item
+}
 
 #
 # Invoked from the "Add Bookmark" command
@@ -1030,7 +982,7 @@ sub add_bookmark {
     my $fname = $self->{'current_file'};
     $self->add_bookmark_items("$fname:$line");
 
-}    # end of add_bookmark
+}
 
 #
 # Command executed when someone selects
@@ -1043,7 +995,7 @@ sub bookmark_cmd {
 
     $self->set_file($1, $2);
 
-}    # end of bookmark_cmd
+}
 
 sub save_bookmarks {
     my ($self, $pathName) = @_;
@@ -1072,7 +1024,7 @@ sub save_bookmarks {
         return;
     }
 
-}    # end of save_bookmarks
+}
 
 #
 # This is our callback from a double click in our
@@ -1096,7 +1048,7 @@ sub expr_expand {
     for ($root = $path; defined $parent && $parent ne ""; $parent = $hl->infoParent($root)) {
         $root = $parent;
         $depth += 1;
-    }    #end of root search
+    }
 
     #
     # Determine the index of the root of our expression
@@ -1130,7 +1082,7 @@ sub expr_expand {
         #
         $DB::window->{'event'} = 'update';
     }
-}    # end of expr_expand
+}
 
 sub line_number_from_coord {
     my ($txtWidget, $coord) = @_;
@@ -1149,7 +1101,7 @@ sub line_number_from_coord {
 
     return ($2, $1);
 
-}    # end of line_number_from_coord
+}
 
 #
 # It may seem as if $txtWidget and $self are
@@ -1164,7 +1116,7 @@ sub set_breakpoint_tag {
 
     $self->insertBreakpoint($self->{'current_file'}, $idx, $value);
 
-}    # end of set_breakpoint_tag
+}
 
 sub clear_breakpoint_tag {
     my ($txtWidget, $self, $coord) = @_;
@@ -1174,7 +1126,7 @@ sub clear_breakpoint_tag {
 
     $self->removeBreakpoint($self->{'current_file'}, $idx);
 
-}    # end of clear_breakpoint_tag
+}
 
 sub change_breakpoint_tag {
     my ($txtWidget, $self, $coord, $value) = @_;
@@ -1209,7 +1161,7 @@ sub change_breakpoint_tag {
         }
     }
 
-}    # end of change_breakpoint_tag
+}
 
 #
 # God Forbid anyone comment something complex and tightly optimized.
@@ -1264,11 +1216,11 @@ sub tree_split {
             $h = $h->{$_};
         }
         @$h{ 'name', 'path' } = ($_, $list_elem);    # the last leaf is our entry
-    }    # end of tree_split loop
+    }
 
     return $topH;
 
-}    # end of tree_split
+}
 
 #
 # callback executed when someone double clicks
@@ -1319,12 +1271,12 @@ sub sub_list_cmd {
 
     $self->set_file($1, $2);
 
-}    # end of sub_list_cmd
+}
 
 sub fill_subs_page {
     my ($self) = @_;
 
-    $self->{'sub_list'}->delete('all');    # clear existing entries
+    $self->{'sub_list'}->delete('all');                      # clear existing entries
 
     my @list = keys %DB::sub;
 
@@ -1334,7 +1286,7 @@ sub fill_subs_page {
 
     for (sort keys %$Devel::ptkdb::subs_tree) {
         $self->{'sub_list'}->add($_, -text => $_);
-    }                                      # end of top level loop
+    }
 }
 
 sub setup_subs_page {
@@ -1355,7 +1307,7 @@ sub setup_subs_page {
 
     $self->{'subs_list_cnt'} = scalar keys %DB::sub;
 
-}    # end of setup_subs_page
+}
 
 sub check_search_request {
     my ($entry, $self, $searchButton, $regexBtn) = @_;
@@ -1398,7 +1350,7 @@ sub setup_search_panel {
 
     $frm->pack(@packArgs);
 
-}    # end of setup search_panel
+}
 
 sub setup_breakpts_page {
     my ($self) = @_;
@@ -1415,7 +1367,7 @@ sub setup_breakpts_page {
 
     $self->{'breakpts_table_data'} = {};    # controls addressed by "fname:lineno"
 
-}    # end of setup_breakpts_page
+}
 
 sub setup_frames {
     my ($self) = @_;
@@ -1524,7 +1476,7 @@ sub setup_frames {
 
     $self->setup_breakpts_page();
 
-}    # end of setup_frames
+}
 
 sub configure_text {
     my ($self) = @_;
@@ -1617,7 +1569,7 @@ sub configure_text {
         [\&Devel::ptkdb::change_breakpoint_tag, $self, Ev('@'), 1]
     );
 
-}    # end of configure_text
+}
 
 sub setup_options {
     my ($self) = @_;
@@ -1633,7 +1585,7 @@ sub setup_options {
 
     $mw->optionClear;    #  necessary to reload xresources
 
-}    # end of setup_options
+}
 
 sub DoAlert {
     my ($self, $msg, $title) = @_;
@@ -1649,7 +1601,7 @@ sub DoAlert {
     $dlg->Button(-text => "Okay", -command => $okaySub)->pack(-side => 'top')->focus;
     $dlg->bind('<Return>', $okaySub);
 
-}    # end of DoAlert
+}
 
 sub simplePromptBox {
     my ($self, $title, $defaultText, $okaySub, $cancelSub) = @_;
@@ -1681,13 +1633,13 @@ sub simplePromptBox {
 
     return $top;
 
-}    # end of simplePromptBox
+}
 
 sub get_entry_text {
     my ($self) = @_;
 
-    return $self->{entry}->get();    # get the text in the entry
-}    # end of get_entry_text
+    return $self->{entry}->get();                                         # get the text in the entry
+}
 
 #
 # Clear any text that is in the entry field.  If there
@@ -1722,7 +1674,7 @@ sub clear_entry_text {
     # Erase existing text
     #
     return $str;
-}    # end of clear_entry_text
+}
 
 sub brkPtCheckbutton {
     my ($self, $fname, $idx, $brkPt) = @_;
@@ -1731,7 +1683,7 @@ sub brkPtCheckbutton {
     change_breakpoint_tag($self->{'text'}, $self, "$idx.0", $brkPt->{'value'})
         if $fname eq $self->{'current_file'};
 
-}    # end of brkPtCheckbutton
+}
 
 #
 # insert a breakpoint control into our breakpoint list.
@@ -1772,8 +1724,8 @@ sub insertBreakpoint {
             $value ? "breaksetLine" : "breakdisabledLine",
             "$index.0", "$index.$Devel::ptkdb::linenumber_length"
         );
-    }    # end of loop
-}    # end of insertBreakpoint
+    }
+}
 
 sub add_brkpt_to_brkpt_page {
     my ($self, $brkPt) = @_;
@@ -1838,7 +1790,7 @@ sub add_brkpt_to_brkpt_page {
         $self->{'notebook'}->configure(-width => $width);
     }
 
-}    # end of add_brkpt_to_brkpt_page
+}
 
 sub remove_brkpt_from_brkpt_page {
     my ($self, $fname, $idx) = @_;
@@ -1862,7 +1814,7 @@ sub remove_brkpt_from_brkpt_page {
 
     $self->{'brkPtCnt'} -= 1;
 
-}    # end of remove_brkpt_from_brkpt_page
+}
 
 #
 # Supporting the "Run To Here..." command
@@ -1881,7 +1833,7 @@ sub insertTempBreakpoint {
         { 'type' => 'temp', 'line' => $index, 'value' => 1 }
     );
 
-}    # end of insertTempBreakpoint
+}
 
 sub reinsertBreakpoints {
     my ($self, $fname) = @_;
@@ -1897,9 +1849,9 @@ sub reinsertBreakpoints {
         $self->insertBreakpoint($fname, @$brkPt{ 'line', 'value', 'expr' })
             if ($brkPt->{'type'} eq 'user');
         $self->insertTempBreakpoint($fname, $brkPt->{line}) if ($brkPt->{'type'} eq 'temp');
-    }    # end of reinsert loop
+    }
 
-}    # end of reinsertBreakpoints
+}
 
 sub removeBreakpointTags {
     my ($self, @brkPts) = @_;
@@ -1919,7 +1871,7 @@ sub removeBreakpointTags {
 
         $self->{'text'}->tagAdd("breakableLine", "$idx.0", "$idx.$Devel::ptkdb::linenumber_length");
     }
-}    # end of removeBreakpointTags
+}
 
 #
 # Remove a breakpoint from the current window
@@ -1932,7 +1884,7 @@ sub removeBreakpoint {
 
     $offset = $dbline[1] =~ /use\s+.*Devel::_?ptkdb/ ? 1 : 0;
 
-    for my $idx (@idx) {    # end of removal loop
+    for my $idx (@idx) {
         next unless defined $idx;
         my $brkPt = &DB::getdbline($fname, $idx + $offset);
         next unless $brkPt;    # if we do not have an entry
@@ -1945,17 +1897,17 @@ sub removeBreakpoint {
         # Delete the ext associated with the breakpoint expression (if any)
 
         $self->removeBreakpointTags($brkPt);
-    }    # end of remove loop
+    }
 
     return;
-}    # end of removeBreakpoint
+}
 
 sub removeAllBreakpoints {
     my ($self, $fname) = @_;
 
     $self->removeBreakpoint($fname, &DB::getdblineindexes($fname));
 
-}    # end of removeAllBreakpoints
+}
 
 #
 # Delete expressions prior to an update
@@ -1963,7 +1915,7 @@ sub removeAllBreakpoints {
 sub deleteAllExprs {
     my ($self) = @_;
     $self->{'data_list'}->delete('all');
-}    # end of deleteAllExprs
+}
 
 sub EnterExpr {
     my ($self) = @_;
@@ -1972,7 +1924,7 @@ sub EnterExpr {
         $self->{'expr'}  = $str;
         $self->{'event'} = 'expr';
     }
-}    # end of EnterExpr
+}
 
 #
 #
@@ -1986,7 +1938,7 @@ sub QuickExpr {
         $self->{'qexpr'} = $str;
         $self->{'event'} = 'qexpr';
     }
-}    # end of QuickExpr
+}
 
 sub deleteExpr {
     my ($self) = @_;
@@ -2002,7 +1954,7 @@ sub deleteExpr {
         next if ($entry =~ /\//);    # goto next expression if we're not a top level ( expr/entry)
         $i = 0;
         grep { push @indexes, $i if ($_->{'expr'} eq $entry); $i++; } @{ $self->{'expr_list'} };
-    }    # end of check loop
+    }
 
     # now take out our list of indexes ;
 
@@ -2013,19 +1965,19 @@ sub deleteExpr {
     for (@sList) {
         $self->{'data_list'}->delete('entry', $_);
     }
-}    # end of deleteExpr
+}
 
 sub fixExprPath {
     my (@pathList) = @_;
 
     for (@pathList) {
         s/$Devel::ptkdb::pathSep/$Devel::ptkdb::pathSepReplacement/go;
-    }    # end of path list
+    }
 
     return $pathList[0] unless wantarray;
     return @pathList;
 
-}    # end of fixExprPath
+}
 
 #
 # Inserts an expression($theRef) into an HList Widget($dl).  If the expression
@@ -2035,15 +1987,11 @@ sub fixExprPath {
 # This continues until the entire expression is decomposed to it's atomic constituents.
 # Protection is given(with $reusedRefs) to ensure that 'circular' references within
 # arrays or hashes(i.e. where a member of a array or hash contains a reference to a
-# parent element within the heirarchy.
-#
-#
-# Returns 1 if sucessfully added 0 if not
+# parent element within the hierarchy. Returns 1 if sucessfully added 0 if not
 #
 sub insertExpr {
     my ($self, $reusedRefs, $dl, $theRef, $name, $depth, $dirPath) = @_;
     my ($label, $type, $result, $selfCnt, @circRefs);
-    local ($^W) = 0;    # spare us uncessary warnings about comparing strings with ==
 
     #
     # Add data new data entries to the bottom
@@ -2118,7 +2066,7 @@ sub insertExpr {
             $idx += 1;
         }
         return 1;
-    }    # end of array case
+    }
 
     if ("$theRef" !~ /HASH\050\060x[0-9a-f]*\051/o) {
         eval { $dl->add($dirPath . fixExprPath($name), -text => "$name = $theRef"); };
@@ -2185,10 +2133,10 @@ sub insertExpr {
 
         return 0 unless $result;
         $idx += 1;
-    }    # end of ref add loop
+    }
 
     return 1;
-}    # end of insertExpr
+}
 
 #
 # We're setting the line where we are stopped.
@@ -2215,7 +2163,7 @@ sub set_line {
     );
 
     $self->{'text'}->see("$self->{current_line}.0 linestart");
-}    # end of set_line
+}
 
 #
 # Set the file that is in the code window.
@@ -2224,16 +2172,12 @@ sub set_line {
 # $line the line number we're at
 # $brkPts any breakpoints that may have been set in this file
 #
-
-use Carp;
-
 sub set_file {
     my ($self,    $fname,  $line) = @_;
     my ($lineStr, $offset, $text, $i, @text, $noCode, $title);
     my (@breakableTagList, @nonBreakableTagList);
 
     return unless $fname;    # we're getting an undef here on 'Restart...'
-
     local (*dbline) = $main::{ '_<' . $fname };
 
     #
@@ -2262,74 +2206,62 @@ sub set_file {
 
     my $len = $Devel::ptkdb::linenumber_length;
 
-    #
-    # This is the tightest loop we have in the ptkdb code.
-    # It is here where performance is the most critical.
-    # The map block formats perl code for display.  Since
-    # the file could be potentially large, we will try
-    # to make this loop as thin as possible.
-    #
-    # NOTE:  For a new perl individual this may appear as
-    # if it was intentionally obfuscated.  This is not
-    # not the case.  The following code is the result
-    # of an intensive effort to optimize this code.
-    # Prior versions of this code were quite easier
-    # to read, but took 3 times longer.
-    #
+    # This is the tightest loop we have in the ptkdb code.  It is here where
+    # performance is the most critical.  The map block formats perl code for
+    # display.  Since the file could be potentially large, we will try to make
+    # this loop as thin as possible.
 
-    $lineStr = " " x 200;    # pre-allocate space for $lineStr
+    # NOTE: For a new perl individual this may appear as if it was
+    # intentionally obfuscated.  This is not not the case.  The following code
+    # is the result of an intensive effort to optimize this code.  Prior
+    # versions of this code were quite easier to read, but took 3 times longer.
+
+    $lineStr = " " x 200;                        # pre-allocate space for $lineStr
     $i       = 1;
+    $noCode  = ($#dbline - ($offset + 1)) < 0;
 
-    local ($^W) = 0;         # spares us useless warnings under -w when checking $dbline[$_] != 0
-                             #
-                             # The 'map' call will build list of 'string', 'tag' pairs
-                             # that will become arguments to the 'insert' call.  Passing
-                             # the text to insert "all at once" rather than one insert->('end', 'string', 'tag')
-                             # call at time provides a MASSIVE savings in execution time.
-                             #
-    $noCode = ($#dbline - ($offset + 1)) < 0;
+    # The 'map' call will build list of 'string', 'tag' pairs that will become
+    # arguments to the 'insert' call.  Passing the text to insert "all at once"
+    # rather than one insert->('end', 'string', 'tag') call at time provides a
+    # MASSIVE savings in execution time.
+    {
+        no warnings 'uninitialized';    # spares us useless warnings checking $dbline[$_] != 0
+        $text->insert(
+            'end',
+            map {
+                #
+                # build collections of tags representing
+                # the line numbers for breakable and
+                # non-breakable lines.  We apply these
+                # tags after we've built the text
+                #
 
-    $text->insert(
-        'end',
-        map {
-            #
-            # build collections of tags representing
-            # the line numbers for breakable and
-            # non-breakable lines.  We apply these
-            # tags after we've built the text
-            #
+                ($_ != 0 && push @breakableTagList, "$i.0", "$i.$len") || push @nonBreakableTagList,
+                    "$i.0", "$i.$len";
 
-            ($_ != 0 && push @breakableTagList, "$i.0", "$i.$len") || push @nonBreakableTagList,
-                "$i.0", "$i.$len";
+                $lineStr = sprintf($Devel::ptkdb::linenumber_format, $i++) . $_;    # line number + text of the line
 
-            $lineStr = sprintf($Devel::ptkdb::linenumber_format, $i++) . $_;    # line number + text of the line
+                substr $lineStr, -2, 1, '' if $isWin32;                             # removes the CR from win32 instances
 
-            substr $lineStr, -2, 1, '' if $isWin32;                             # removes the CR from win32 instances
+                $lineStr .= "\n" unless /\n$/o;                                     # append a \n if there isn't one already
 
-            $lineStr .= "\n" unless /\n$/o;                                     # append a \n if there isn't one already
+                ($lineStr, 'code');                                                 # return value for block, a string,tag pair for text insert
 
-            ($lineStr, 'code');                                                 # return value for block, a string,tag pair for text insert
+            } @dbline[$offset + 1 .. $#dbline]
+        ) unless $noCode;
+    }
 
-        } @dbline[$offset + 1 .. $#dbline]
-    ) unless $noCode;
-
-    #
-    # Apply the tags that we've collected
-    # NOTE:  it was attempted to incorporate these
-    # operations into the 'map' block above, but that
-    # actually degraded performance.
-    #
+    # Apply the tags that we've collected NOTE: it was attempted to incorporate
+    # these operations into the 'map' block above, but that actually degraded
+    # performance.
     $text->tagAdd("breakableLine",    @breakableTagList)    if @breakableTagList;       # apply tag to line numbers where the lines are breakable
     $text->tagAdd("nonbreakableLine", @nonBreakableTagList) if @nonBreakableTagList;    # apply tag to line numbers where the lines are not breakable.
 
-    #
     # Reinsert breakpoints (if info provided)
-    #
-
     $self->set_line($line);
     $self->{current_file} = $fname;
     return $self->reinsertBreakpoints($fname);
-}    # end of set_file
+}
 
 #
 # Get the current line that the insert cursor is in
@@ -2342,14 +2274,14 @@ sub get_lineno {
     $info =~ s/\..*$/\.0/;
 
     return int $info;
-}    # end of get_lineno
+}
 
 sub DoGoto {
     my ($self, $entry) = @_;
 
     my $txt = $entry->get();
 
-    $txt =~ s/(\d*).*/$1/;    # take the first blob of digits
+    $txt =~ s/(\d*).*/$1/;                       # take the first blob of digits
     if ($txt eq "") {
         print "invalid text range\n";
         return if $txt eq "";
@@ -2359,7 +2291,7 @@ sub DoGoto {
 
     $entry->selectionRange(0, 'end') if $entry->can('selectionRange');
 
-}    # end of DoGoto
+}
 
 sub GotoLine {
     my ($self) = @_;
@@ -2414,7 +2346,7 @@ sub GotoLine {
 
     $self->{goto_window} = $topLevel;
 
-}    # end of GotoLine
+}
 
 #
 # Subroutine called when the 'okay' button is pressed
@@ -2467,11 +2399,11 @@ sub FindSearch {
         # tag the newly found text
 
         $self->{'text'}->tagAdd('search_tag', @{ $self->{search_tag} });
-    }    # end of text found
+    }
 
     $entry->selectionRange(0, 'end') if $entry->can('selectionRange');
 
-}    # end of FindSearch
+}
 
 #
 # Support for the Find Text... Menu command
@@ -2551,7 +2483,7 @@ sub FindText {
 
     $self->{find_window} = $top;
 
-}    # end of FindText
+}
 
 sub main_loop {
     my ($self) = @_;
@@ -2572,18 +2504,14 @@ sub main_loop {
         $evt =~ /update/o      && do { return $evt; };     # forces an update on our expression window
         $evt =~ /reeval/o      && do { return $evt; };     # updated the open expression eval window
         $evt =~ /balloon_eval/ && do { return $evt };
-    }    # end of switch block
+    }
     return $evt;
-}    # end of main_loop
-
-#
-# $subStackRef   A reference to the current subroutine stack
-#
+}
 
 sub goto_sub_from_stack {
     my ($self, $f, $lineno) = @_;
     $self->set_file($f, $lineno);
-}    # end of goto_sub_from_stack ;
+}
 
 sub refresh_stack_menu {
     my ($self) = @_;
@@ -2620,14 +2548,12 @@ sub refresh_stack_menu {
         $self->{stack_menu}
             ->command(-label => $str, -command => sub { $self->goto_sub_from_stack($f, $line); });
     }
-}    # end of refresh_stack_menu
-
-no strict;    ## no critic TestingAndDebugging::ProhibitNoStrict
+}
 
 sub get_state {
     my ($self, $fname) = @_;
     my ($val);
-    local ($files, $expr_list, $eval_saved_text, $main_win_geometry);
+    our ($files, $expr_list, $eval_saved_text, $main_win_geometry);
 
     do "$fname";
 
@@ -2637,9 +2563,7 @@ sub get_state {
     }
 
     return ($files, $expr_list, $eval_saved_text, $main_win_geometry);
-}    # end of get_state
-
-use strict;
+}
 
 sub restoreStateFile {
     my ($self, $fname) = @_;
@@ -2672,7 +2596,7 @@ sub restoreStateFile {
         # restore the height and width of the window
         $self->{main_window}->geometry($main_win_geometry);
     }
-}    # end of retstoreState
+}
 
 sub updateEvalWindow {
     my ($self, @result) = @_;
@@ -2700,7 +2624,7 @@ sub updateEvalWindow {
         $leng += length $str;
         $self->{eval_results}->insert('end', $str);
     }
-}    # end of updateEvalWindow
+}
 
 #
 # converts non printable chars to '.' for a string
@@ -2738,7 +2662,7 @@ sub hexDump {
 
     return $retList[0] unless wantarray;
     return @retList;
-}    # end of hd
+}
 
 sub setupEvalWindow {
     my ($self) = @_;
@@ -2798,16 +2722,15 @@ sub setupEvalWindow {
         ->pack(-side => 'left', -fill => 'x', -expand => 1);
     $top->Checkbutton(-text => 'Hex', -variable => \$self->{hexdump_evals})->pack(-side => 'left');
 
-}    # end of setupEvalWindow ;
+}
 
 sub filterBreakPts {
     my ($breakPtsListRef, $fname) = @_;
     my $dbline = $main::{ '_<' . $fname };    # breakable lines
-    local ($^W) = 0;
-    #
-    # Go through the list of breaks and take out any that
-    # are no longer breakable
-    #
+                                              #
+                                              # Go through the list of breaks and take out any that
+                                              # are no longer breakable
+                                              #
 
     for (@$breakPtsListRef) {
         next unless defined $_;
@@ -2816,7 +2739,7 @@ sub filterBreakPts {
 
         $_ = undef;
     }
-}    # end of filterBreakPts
+}
 
 sub DoAbout {
     my $self = shift;
@@ -2824,9 +2747,11 @@ sub DoAbout {
         = "ptkdb $Devel::ptkdb::VERSION\nCopyright 1998,2003 by Andrew E. Page\nFeedback to aepage\@users.sourceforge.net\n\n";
     my $threadString = "";
 
-    $threadString = "Threads Available"         if $Config::Config{usethreads};
-    $threadString = " Thread Debugging Enabled" if $DB::usethreads;
-
+    $threadString = "Threads Available" if $Config::Config{usethreads};
+    {
+        no warnings 'once';
+        $threadString = " Thread Debugging Enabled" if $DB::usethreads;
+    }
     $str .= <<"__STR__";
   This program is free software; you can redistribute it and/or modify
       it under the terms of either:
@@ -2850,7 +2775,7 @@ Data::Dumper Version $Data::Dumper::VERSION
 __STR__
 
     $self->DoAlert($str, "About ptkdb");
-}    # end of DoAbout
+}
 
 #
 # return 1 if succesfully set,
@@ -2861,7 +2786,6 @@ sub SetBreakPoint {
     my $dbw    = $DB::window;
     my $lineno = $dbw->get_lineno();
     my $expr   = $dbw->clear_entry_text();
-    local ($^W) = 0;
 
     if (!&DB::checkdbline($DB::window->{current_file}, $lineno + $self->{'line_offset'})) {
         $dbw->DoAlert("line $lineno in $DB::window->{current_file} is not breakable");
@@ -2877,14 +2801,14 @@ sub SetBreakPoint {
     }
 
     return 0;
-}    # end of SetBreakPoint
+}
 
 sub UnsetBreakPoint {
     my ($self) = @_;
     my $lineno = $self->get_lineno();
 
     $self->removeBreakpoint($DB::window->{current_file}, $lineno);
-}    # end of UnsetBreakPoint
+}
 
 sub balloon_post {
     my $self = $DB::window;
@@ -2927,7 +2851,7 @@ sub balloon_motion {
     $self->{'balloon_expr'} = $data;
 
     return 1;                                          # ballon will be canceled and a new one put up(maybe)
-}    # end of balloon_motion
+}
 
 sub retrieve_text_expr {
     my ($self, $x, $y) = @_;
@@ -3000,7 +2924,7 @@ sub code_motion_eval {
     #
 
     $self->{'expr_ballon_msg'} = "$self->{'balloon_expr'} = " . substr $str, 0, 1024;
-}    # end of code motion eval
+}
 
 #
 # Subroutine called when we enter DB::DB()
@@ -3012,7 +2936,7 @@ sub EnterActions {
 
     #  $self->{'main_window'}->Unbusy() ;
 
-}    # end of EnterActions
+}
 
 #
 # Subroutine called when we return from DB::DB()
@@ -3022,7 +2946,7 @@ sub LeaveActions {
     my ($self) = @_;
 
     #  $self->{'main_window'}->Busy() ;
-}    # end of LeaveActions
+}
 
 sub BEGIN {
     $Devel::ptkdb::scriptName  = $0;
@@ -3058,7 +2982,7 @@ sub DoRestart {
 
     exec $fname;
 
-}    # end of DoRestart
+}
 
 #
 # Enables/Disables the feature where we stop
@@ -3084,12 +3008,11 @@ sub set_stop_on_warning {
         #
         # Restore any previous warning signal
         #
-        local ($^W) = 0;
         $SIG{'__WARN__'} = $DB::ptkdb::warn_sig_save;
     }
-}    # end of set_stop_on_warning
+}
 
-1;   # end of Devel::ptkdb
+1;
 
 package DB;
 
@@ -3132,7 +3055,7 @@ sub updateExprs {
         }
     }
 
-}    # end of updateExprs
+}
 
 # turning strict off (shame shame) because we keep getting errrs for the local(*dbline)
 no strict;    ## no critic TestingAndDebugging::ProhibitNoStrict
@@ -3147,14 +3070,13 @@ sub checkdbline {
 
     return 0 unless $fname;    # we're getting an undef here on 'Restart...'
 
-    local ($^W)     = 0;                          # spares us warnings under -w
     local (*dbline) = $main::{ '_<' . $fname };
 
     my $flag = $dbline[$lineno] != 0;
 
     return $flag;
 
-}    # end of checkdbline
+}
 
 #
 # sets a breakpoint 'through' a magic
@@ -3165,19 +3087,19 @@ sub setdbline {
     local (*dbline) = $main::{ '_<' . $fname };
 
     $dbline{$lineno} = $value;
-}    # end of setdbline
+}
 
 sub getdbline {
     my ($fname, $lineno) = @_;
     local (*dbline) = $main::{ '_<' . $fname };
     return $dbline{$lineno};
-}    # end of getdbline
+}
 
 sub getdbtextline {
     my ($fname, $lineno) = @_;
     local (*dbline) = $main::{ '_<' . $fname };
     return $dbline[$lineno];
-}    # end of getdbline
+}
 
 sub cleardbline {
     my ($fname, $lineno, $clearsub) = @_;
@@ -3189,7 +3111,7 @@ sub cleardbline {
     &$clearsub($value) if $value && $clearsub;
 
     return $value;
-}    # end of cleardbline
+}
 
 sub clearalldblines {
     my ($clearsub) = @_;
@@ -3203,19 +3125,22 @@ sub clearalldblines {
         for my $dbkey (keys %dbline) {
             $brkPt = $dbline{$dbkey};
             delete $dbline{$dbkey};
-            next unless $brkPt && $clearSub;
+            {
+                no warnings 'once';
+                next unless $brkPt && $clearSub;
+            }
             &$clearsub($brkPt);    # if specificed, call the sub routine to clear the breakpoint
         }
 
-    }    # end of key loop
+    }
 
-}    # end of clearalldblines
+}
 
 sub getdblineindexes {
     my ($fname) = @_;
     local (*dbline) = $main::{ '_<' . $fname };
     return keys %dbline;
-}    # end of getdblineindexes
+}
 
 sub getbreakpoints {
     my (@fnames) = @_;
@@ -3227,7 +3152,7 @@ sub getbreakpoints {
         push @retList, values %dbline;
     }
     return @retList;
-}    # end of getbreakpoints
+}
 
 #
 # Construct a hash of the files
@@ -3251,15 +3176,15 @@ sub breakpoints_to_save {
 
             push @$list, $svBrkPt;
 
-        }    # end of breakpoint loop
+        }
 
         $brkList->{$file} = $list;
 
-    }    # end of file loop
+    }
 
     return $brkList;
 
-}    # end of breakpoints_to_save
+}
 
 #
 # When we restore breakpoints from a state file
@@ -3277,7 +3202,6 @@ sub fix_breakpoints {
     my (@brkPts) = @_;
     my ($startLine, $endLine, $nLines);
     my (@retList);
-    local ($^W) = 0;
 
     $nLines = scalar @dbline;
 
@@ -3292,11 +3216,11 @@ sub fix_breakpoints {
             push @retList, $brkPt;
             last;
         }
-    }    # end of breakpoint list
+    }
 
     return @retList;
 
-}    # end of fix_breakpoints
+}
 
 #
 # Restore breakpoints saved above
@@ -3321,9 +3245,9 @@ sub restore_breakpoints_from_save {
             }
             $dbline{ $brkPt->{'line'} } = {%$brkPt};    # make a fresh copy
         }
-    }    # end of reinsert loop
+    }
 
-}    # end of restore_breakpoints_from_save ;
+}
 
 use strict;
 
@@ -3331,7 +3255,7 @@ sub dbint_handler {
     my ($sigName) = @_;
     $DB::single = 1;
     print "signalled\n";
-}    # end of dbint_handler
+}
 
 #
 # Do first time initialization at the startup
@@ -3370,7 +3294,7 @@ sub Initialize {
         &DB::restoreState($fName) if $Devel::ptkdb::DataDumperAvailable;
     }
 
-}    # end of Initialize
+}
 
 sub restoreState {
     my ($fName) = @_;
@@ -3391,7 +3315,7 @@ sub restoreState {
         }
     }
 
-}    # end of Restore State
+}
 
 sub makeFileSaveName {
     my ($fName) = @_;
@@ -3404,7 +3328,7 @@ sub makeFileSaveName {
     }
 
     return $saveName;
-}    # end of makeFileSaveName
+}
 
 sub save_state_file {
     my ($fname) = @_;
@@ -3429,7 +3353,7 @@ sub save_state_file {
     print $F $saveStr || die "Couldn't write file";
 
     close $F;
-}    # end of save_state_file
+}
 
 sub SaveState {
     my ($name_in) = @_;
@@ -3489,11 +3413,11 @@ sub SaveState {
             close $F;
         };
         $win->DoAlert($@) if $@;
-    };    # end of save sub
+    };
 
     $cancelSub = sub {
         delete $win->{'save_box'};
-    };    # end of cancel sub
+    };
 
     #
     # Create a dialog
@@ -3501,7 +3425,7 @@ sub SaveState {
 
     $win->{'save_box'} = $win->simplePromptBox("Save Config?", $saveName, $saveSub, $cancelSub);
 
-}    # end of SaveState
+}
 
 sub RestoreState {
     my ($top, $restoreSub);
@@ -3515,12 +3439,12 @@ sub RestoreState {
         makeFileSaveName($DB::startupFname), $restoreSub
     );
 
-}    # end of RestoreState
+}
 
 sub SetStepOverBreakPoint {
     my ($offset) = @_;
     $DB::step_over_depth = $DB::subroutine_depth + ($offset ? $offset : 0);
-}    # end of SetStepOverBreakPoint
+}
 
 #
 # NOTE:   It may be logical and somewhat more economical
@@ -3565,7 +3489,7 @@ sub isBreakPoint {
     $DB::subroutine_depth = $DB::subroutine_depth;
 
     return 1;
-}    # end of isBreakPoint
+}
 
 #
 # Check the breakpoint expression to see if it
@@ -3589,7 +3513,7 @@ sub breakPointEvalExpr {
                                        # element is undefined but subsequent
                                        # elements are defined
 
-}    # end of breakPointEvalExpr
+}
 
 #
 # Evaluate the given expression, return the result.
@@ -3600,15 +3524,14 @@ sub dbeval {
     my ($ptkdb__package, $ptkdb__expr) = @_;
     my (@ptkdb__result, $ptkdb__str);
     my (@ptkdb_args);
-    local ($^W) = 0;    # temporarily turn off warnings
 
-    no strict;          ## no critic TestingAndDebugging::ProhibitNoStrict
-                        #
-                        # This substitution is done so that
-                        # we return HASH, as opposed to an ARRAY.
-                        # An expression of %hash results in a
-                        # list of key/value pairs.
-                        #
+    no strict;    ## no critic TestingAndDebugging::ProhibitNoStrict
+                  #
+                  # This substitution is done so that
+                  # we return HASH, as opposed to an ARRAY.
+                  # An expression of %hash results in a
+                  # list of key/value pairs.
+                  #
 
     $ptkdb__expr =~ s/^\s*%/\\%/o;
 
@@ -3630,7 +3553,7 @@ __EVAL__
     use strict;
 
     return @ptkdb__result;
-}    # end of dbeval
+}
 
 #
 # Call back we give to our 'quit' button
@@ -3639,7 +3562,7 @@ __EVAL__
 #
 sub dbexit {
     exit;
-}    # end of dbexit
+}
 
 #
 # This is the primary entry point for the debugger.  When a perl program
@@ -3649,216 +3572,198 @@ sub dbexit {
 # Refs:  Progamming Perl 2nd Edition, Larry Wall, O'Reilly & Associates, Chapter 8
 #
 
-#
-# Since perl 5.8.0 we need to predeclare the sub DB{} at the start of the
-# package or else the compilation fails.  We need to disable warnings though
-# since in 5.6.x we get warnings on the sub DB begin redeclared.  Using
-# local($^W) = 0 will leave warnings disabled for the rest of the compile
-# and we don't want that.
-#
-my ($saveW);
+{
+    no warnings 'redefine';
 
-sub BEGIN {
-    $saveW = $^W;
-    $^W    = 0;
-}
-
-no strict;    ## no critic TestingAndDebugging::ProhibitNoStrict
-
+    # Keep emacs imenu happy
+    #<<< perltidy
 sub DB {
-    @DB::saved_args = @_;    # save arg context
-    $DB::save_err   = $@;    # save value of $@
-    my ($package, $filename, $line) = caller;
-    my ($stop, $cnt);
+    #>>> perltidy
+        @DB::saved_args = @_;    # save arg context
+        $DB::save_err   = $@;    # save value of $@
+        my ($package, $filename, $line) = caller;
+        my ($stop, $cnt);
 
-    $^W = $saveW;
-    unless ($DB::ptkdb::isInitialized) {
-        return if ($filename ne $0);    # not in our target file
-        &DB::Initialize($filename);
-    }
-
-    if (!isBreakPoint($filename, $line, $package)) {
-        $DB::single = 0;
-        $@          = $DB::save_err;
-        return;
-    }
-
-    if (!$DB::window) {    # not setup yet
-        $@ = $DB::save_err;
-        return;
-    }
-
-    $DB::window->setup_main_window() unless $DB::window->{'main_window'};
-
-    $DB::window->EnterActions();
-
-    my ($saveP);
-    $saveP = $^P;
-    $^P    = 0;
-
-    $DB::on = 1;
-
-    #
-    # The user can specify this variable in one of the startup files,
-    # this will make the debugger run right after startup without
-    # the user having to press the 'run' button.
-    #
-    if ($DB::no_stop_at_start) {
-        $DB::no_stop_at_start = 0;
-        $DB::on               = 0;
-        $@                    = $DB::save_err;
-        return;
-    }
-
-    if (!$DB::sigint_disable) {
-        $SIG{'INT'} = $DB::dbint_handler_save if $DB::dbint_handler_save;    # restore original signal handler
-        $SIG{'INT'} = "DB::dbexit" unless $DB::dbint_handler_save;
-    }
-
-    #$DB::window->{main_window}->raise() ; # bring us to the top make sure OUR event loop runs
-    $DB::window->{main_window}->focus();
-
-    $DB::window->set_file($filename, $line);
-    #
-    # Refresh the exprs to see if anything has changed
-    #
-    updateExprs($package);
-
-    #
-    # Update subs Page if necessary
-    #
-    $cnt = scalar keys %DB::sub;
-    if ($cnt != $DB::window->{'subs_list_cnt'} && $DB::window->{'subs_page_activated'}) {
-        $DB::window->fill_subs_page();
-        $DB::window->{'subs_list_cnt'} = $cnt;
-    }
-    #
-    # Update the subroutine stack menu
-    #
-    $DB::window->refresh_stack_menu();
-
-    $DB::window->{run_flag} = 1;
-
-    my ($evt, @result, $r);
-
-    for (;;) {
-        #
-        # we wait here for something to do
-        #
-        $evt = $DB::window->main_loop();
-
-        last if ($evt eq 'step');
-
-        $DB::single = 0 if ($evt eq 'run');
-
-        if ($evt eq 'balloon_eval') {
-            $DB::window->code_motion_eval(&DB::dbeval($package, $DB::window->{'balloon_expr'}));
-            next;
+        unless ($DB::ptkdb::isInitialized) {
+            return if ($filename ne $0);    # not in our target file
+            &DB::Initialize($filename);
         }
 
-        if ($evt eq 'qexpr') {
-            my $str;
-            @result = &DB::dbeval($package, $DB::window->{'qexpr'});
-            $DB::window->{'quick_entry'}->delete(0, 'end');    # clear old text
-            if (exists $DB::window->{'quick_dumper'}) {
-                $DB::window->{'quick_dumper'}->Reset();
-                $DB::window->{'quick_dumper'}->Values([$#result == 0 ? @result : \@result]);
-                if ($DB::window->{'quick_dumper'}->can('Dumpxs')) {
-                    $str = $DB::window->{'quick_dumper'}->Dumpxs();
-                } else {
-                    $str = $DB::window->{'quick_dumper'}->Dump();
-                }
-            } else {
-                $str = "@result";
-            }
-            $DB::window->{'quick_entry'}->insert(0, $str);             #enter the text
-            $DB::window->{'quick_entry'}->selectionRange(0, 'end');    # select it
-            $evt = 'update';                                           # force an update on the expressions
+        if (!isBreakPoint($filename, $line, $package)) {
+            $DB::single = 0;
+            $@          = $DB::save_err;
+            return;
         }
 
-        if ($evt eq 'expr') {
-            #
-            # Append the new expression to the list
-            # but first check to make sure that we don't
-            # already have it.
-            #
+        if (!$DB::window) {    # not setup yet
+            $@ = $DB::save_err;
+            return;
+        }
 
-            if (grep $_->{'expr'} eq $DB::window->{'expr'}, @{ $DB::window->{'expr_list'} }) {
-                $DB::window->DoAlert("$DB::window->{'expr'} is already listed");
+        $DB::window->setup_main_window() unless $DB::window->{'main_window'};
+
+        $DB::window->EnterActions();
+
+        my ($saveP);
+        $saveP = $^P;
+        $^P    = 0;
+
+        $DB::on = 1;
+
+        #
+        # The user can specify this variable in one of the startup files,
+        # this will make the debugger run right after startup without
+        # the user having to press the 'run' button.
+        #
+        if ($DB::no_stop_at_start) {
+            $DB::no_stop_at_start = 0;
+            $DB::on               = 0;
+            $@                    = $DB::save_err;
+            return;
+        }
+
+        if (!$DB::sigint_disable) {
+            $SIG{'INT'} = $DB::dbint_handler_save if $DB::dbint_handler_save;    # restore original signal handler
+            $SIG{'INT'} = "DB::dbexit" unless $DB::dbint_handler_save;
+        }
+
+        #$DB::window->{main_window}->raise() ; # bring us to the top make sure OUR event loop runs
+        $DB::window->{main_window}->focus();
+
+        $DB::window->set_file($filename, $line);
+        #
+        # Refresh the exprs to see if anything has changed
+        #
+        updateExprs($package);
+
+        #
+        # Update subs Page if necessary
+        #
+        $cnt = scalar keys %DB::sub;
+        if ($cnt != $DB::window->{'subs_list_cnt'} && $DB::window->{'subs_page_activated'}) {
+            $DB::window->fill_subs_page();
+            $DB::window->{'subs_list_cnt'} = $cnt;
+        }
+        #
+        # Update the subroutine stack menu
+        #
+        $DB::window->refresh_stack_menu();
+
+        $DB::window->{run_flag} = 1;
+
+        my ($evt, @result, $r);
+
+        for (;;) {
+            #
+            # we wait here for something to do
+            #
+            $evt = $DB::window->main_loop();
+
+            last if ($evt eq 'step');
+
+            $DB::single = 0 if ($evt eq 'run');
+
+            if ($evt eq 'balloon_eval') {
+                $DB::window->code_motion_eval(&DB::dbeval($package, $DB::window->{'balloon_expr'}));
                 next;
             }
 
-            @result = &DB::dbeval($package, $DB::window->{expr});
-
-            if (@result == 1) {
-                $r = $DB::window->insertExpr(
-                    [$result[0]],
-                    $DB::window->{'data_list'},
-                    $result[0], $DB::window->{'expr'}, $Devel::ptkdb::expr_depth
-                );
-            } else {
-                $r = $DB::window->insertExpr(
-                    [\@result],
-                    $DB::window->{'data_list'},
-                    \@result, $DB::window->{'expr'}, $Devel::ptkdb::expr_depth
-                );
+            if ($evt eq 'qexpr') {
+                my $str;
+                @result = &DB::dbeval($package, $DB::window->{'qexpr'});
+                $DB::window->{'quick_entry'}->delete(0, 'end');    # clear old text
+                if (exists $DB::window->{'quick_dumper'}) {
+                    $DB::window->{'quick_dumper'}->Reset();
+                    $DB::window->{'quick_dumper'}->Values([$#result == 0 ? @result : \@result]);
+                    if ($DB::window->{'quick_dumper'}->can('Dumpxs')) {
+                        $str = $DB::window->{'quick_dumper'}->Dumpxs();
+                    } else {
+                        $str = $DB::window->{'quick_dumper'}->Dump();
+                    }
+                } else {
+                    $str = "@result";
+                }
+                $DB::window->{'quick_entry'}->insert(0, $str);             #enter the text
+                $DB::window->{'quick_entry'}->selectionRange(0, 'end');    # select it
+                $evt = 'update';                                           # force an update on the expressions
             }
 
-            #
-            # $r will be 1 if the expression was added succesfully, 0 if not,
-            # and it if wasn't added sucessfully it won't be reevalled the
-            # next time through.
-            #
-            push @{ $DB::window->{'expr_list'} },
-                { 'expr' => $DB::window->{'expr'}, 'depth' => $Devel::ptkdb::expr_depth }
-                if $r;
+            if ($evt eq 'expr') {
+                #
+                # Append the new expression to the list
+                # but first check to make sure that we don't
+                # already have it.
+                #
 
-            next;
-        }
-        if ($evt eq 'update') {
-            updateExprs($package);
-            next;
-        }
-        if ($evt eq 'reeval') {
-            #
-            # Reevaluate the contents of the expression eval window
-            #
-            my $txt    = $DB::window->{'eval_text'}->get('0.0', 'end');
-            my @result = &DB::dbeval($package, $txt);
+                if (grep $_->{'expr'} eq $DB::window->{'expr'}, @{ $DB::window->{'expr_list'} }) {
+                    $DB::window->DoAlert("$DB::window->{'expr'} is already listed");
+                    next;
+                }
 
-            $DB::window->updateEvalWindow(@result);
+                @result = &DB::dbeval($package, $DB::window->{expr});
 
-            next;
+                if (@result == 1) {
+                    $r = $DB::window->insertExpr(
+                        [$result[0]],
+                        $DB::window->{'data_list'},
+                        $result[0], $DB::window->{'expr'}, $Devel::ptkdb::expr_depth
+                    );
+                } else {
+                    $r = $DB::window->insertExpr(
+                        [\@result],
+                        $DB::window->{'data_list'},
+                        \@result, $DB::window->{'expr'}, $Devel::ptkdb::expr_depth
+                    );
+                }
+
+                #
+                # $r will be 1 if the expression was added succesfully, 0 if not,
+                # and it if wasn't added sucessfully it won't be reevalled the
+                # next time through.
+                #
+                push @{ $DB::window->{'expr_list'} },
+                    { 'expr' => $DB::window->{'expr'}, 'depth' => $Devel::ptkdb::expr_depth }
+                    if $r;
+
+                next;
+            }
+            if ($evt eq 'update') {
+                updateExprs($package);
+                next;
+            }
+            if ($evt eq 'reeval') {
+                #
+                # Reevaluate the contents of the expression eval window
+                #
+                my $txt    = $DB::window->{'eval_text'}->get('0.0', 'end');
+                my @result = &DB::dbeval($package, $txt);
+
+                $DB::window->updateEvalWindow(@result);
+
+                next;
+            }
+            last;
         }
-        last;
+        $^P = $saveP;
+        $SIG{'INT'} = "DB::dbint_handler" unless $DB::sigint_disable;    # set our signal handler
+
+        $DB::window->LeaveActions();
+
+        $@      = $DB::save_err;
+        $DB::on = 0;
     }
-    $^P = $saveP;
-    $SIG{'INT'} = "DB::dbint_handler" unless $DB::sigint_disable;    # set our signal handler
-
-    $DB::window->LeaveActions();
-
-    $@      = $DB::save_err;
-    $DB::on = 0;
-}    # end of DB
+}
 
 #
-# in this case we do not use local($^W) since we would like warnings
-# to be issued past this point, and the localized copy of $^W will not
-# go out of scope until  the end of compilation
+# This is another place where we'll try and keep the code as 'lite' as possible
+# to prevent the debugger from slowing down the user's application.
 #
-#
-
-#
-# This is another place where we'll try and keep the
-# code as 'lite' as possible to prevent the debugger
-# from slowing down the user's application
-#
-# When a perl program is parsed with the -d(in our case a -d:ptkdb) option
-# the parser will route all subroutine calls through here, setting $DB::sub
-# to the name of the subroutine to be called, leaving it to the debugger to
-# make the actual subroutine call and do any pre or post processing it may
-# need to do.  In our case we take the opportunity to track the depth of the call
-# stack so that we can update our 'Stack' menu when we stop.
+# When a perl program is parsed with the -d(in our case a -d:ptkdb) option the
+# parser will route all subroutine calls through here, setting $DB::sub to the
+# name of the subroutine to be called, leaving it to the debugger to make the
+# actual subroutine call and do any pre or post processing it may need to do.
+# In our case we take the opportunity to track the depth of the call stack so
+# that we can update our 'Stack' menu when we stop.
 #
 # Refs:  Progamming Perl 2nd Edition, Larry Wall, O'Reilly & Associates, Chapter 8
 #
@@ -3914,9 +3819,9 @@ sub sub {
         return;
     }
 
-}    # end of sub
+}
 
-1;   # return true value
+1;    # return true value
 
 =head1 NAME
 
@@ -4511,7 +4416,7 @@ http://sourceforge.net/tracker/?atid=437609&group_id=43854&func=browse
 # Hex Dumper and correction of some parameters for Tk804.025_beta6
 #
 # Revision 1.11  2003/06/26 13:42:49  aepage
-# fix for chars at the end of win32 platforms.
+
 #
 # Revision 1.10  2003/05/12 14:38:34  aepage
 # win32 pushback
@@ -4555,3 +4460,5 @@ http://sourceforge.net/tracker/?atid=437609&group_id=43854&func=browse
 # Initialized $self->{'subs_list_cnt'} in the new constructor to 0 to
 # prevent warnings with -w.
 #
+
+1;
