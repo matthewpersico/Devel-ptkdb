@@ -160,7 +160,7 @@ sub BEGIN {
     $Devel::ptkdb::linenumber_offset = length sprintf($Devel::ptkdb::linenumber_format, 0);
     $Devel::ptkdb::linenumber_offset -= 1;
 
-    $Devel::ptkdb::DataDumperAvailable  = 1;                                                  # assuming that it is now
+    $Devel::ptkdb::DataDumperAvailable  = ($] >= 5.005 ? 1 : 0);
     $Devel::ptkdb::useDataDumperForEval = $Devel::ptkdb::DataDumperAvailable;
 
     # DB Options (things not directly involving the window)
@@ -585,13 +585,13 @@ sub setup_menu_bar {
 
         [   'command'  => 'Save Config...',
             -underline => 0,
-            -command   => \&DB::SaveState,
+            -command   => \&DB::save_state_callback,
             @dataDumperEnableOpt
         ],
 
         [   'command'  => 'Restore Config...',
             -underline => 0,
-            -command   => \&DB::RestoreState,
+            -command   => \&DB::restore_state_callback,
             @dataDumperEnableOpt
         ],
 
@@ -3355,7 +3355,7 @@ sub save_state_file {
     close $F;
 }
 
-sub SaveState {
+sub save_state_callback {
     my ($name_in) = @_;
     my ($top,   $entry,   $okayBtn,   $win);
     my ($fname, $saveSub, $cancelSub, $saveName, $eval_saved_text, $d);
@@ -3427,7 +3427,7 @@ sub SaveState {
 
 }
 
-sub RestoreState {
+sub restore_state_callback {
     my ($top, $restoreSub);
 
     $restoreSub = sub {
