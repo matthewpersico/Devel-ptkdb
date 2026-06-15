@@ -1,8 +1,4 @@
-package Devel::ptkdb;    # This package is the main_window object for the debugger
-
-# This is a REALLY old version of Perl, but unless we REALLY need to break
-# this, we won't.
-require 5.004;
+package Devel::ptkdb;
 
 use strict;
 use warnings;
@@ -26,6 +22,9 @@ use Tk::Table;
 #
 # Data
 #
+
+our $window;
+
 use vars qw(@dbline);    # Again, this breaks code if changed to "our".
 my $isWin32 = $^O eq 'MSWin32';
 our $VERSION = "2.0.0";
@@ -76,9 +75,21 @@ sub debug_dump {
     }
 }
 
+sub window {
+    return $window ||= __PACKAGE__->new;
+}
+
+sub has_window {
+    return defined $window;
+}
+
 sub BEGIN {
     console_say(q(Devel::ptkdb BEGIN...)) if (not $^C);
-    $DB::on               = 0;
+
+    {
+        no warnings 'once';
+        $DB::on = 0;
+    }
     $DB::subroutine_depth = 0;    # our subroutine depth counter
     $DB::step_over_depth  = -1;
 
@@ -154,7 +165,10 @@ sub BEGIN {
 
     # Flag to disable us from intercepting $SIG{'INT'}
 
-    $DB::sigint_disable = defined $ENV{'PTKDB_SIGINT_DISABLE'} && $ENV{'PTKDB_SIGINT_DISABLE'};
+    {
+        no warnings 'once';
+        $DB::sigint_disable = defined $ENV{'PTKDB_SIGINT_DISABLE'} && $ENV{'PTKDB_SIGINT_DISABLE'};
+    }
 
     # Possibly for debugging perl CGI Web scripts on remote machines.
     $ENV{'DISPLAY'} = $ENV{'PTKDB_DISPLAY'} if exists $ENV{'PTKDB_DISPLAY'};
@@ -177,7 +191,7 @@ sub DoBugReport {
     $fh = new FileHandle();
 
     for (@browsers) {
-        $pid = open($fh, "$sh $_ $str 2&> /dev/null |");
+        $pid = open($fh, "$sh $_ $str 2&> /dev/null |");    ## no critic (InputOutput::ProhibitTwoArgOpen)
         sleep(2);
         waitpid $pid, 0;
         return if ($? == 0);

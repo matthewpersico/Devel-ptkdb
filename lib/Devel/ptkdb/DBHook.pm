@@ -10,7 +10,6 @@ use Carp;
 use Devel::ptkdb;
 
 our $header = "ptkdb.pm version $Devel::ptkdb::VERSION";
-$DB::window->{current_file} = "";
 
 #
 # Here's the clue...
@@ -22,27 +21,29 @@ $DB::window->{current_file} = "";
 
 sub updateExprs {
     my ($package) = @_;
+    my $window = Devel::ptkdb::window();
+
     #
     # Update expressions
     #
-    $DB::window->deleteAllExprs();
+    $window->deleteAllExprs();
     my (@result);
 
-    for my $expr (@{ $DB::window->{'expr_list'} }) {
+    for my $expr (@{ $window->{'expr_list'} }) {
         next if length $expr == 0;
 
         @result = &DB::dbeval($package, $expr->{'expr'});
 
         if (@result == 1) {
-            $DB::window->insertExpr(
+            $window->insertExpr(
                 [$result[0]],
-                $DB::window->{'data_list'},
+                $window->{'data_list'},
                 $result[0], $expr->{'expr'}, $expr->{'depth'}
             );
         } else {
-            $DB::window->insertExpr(
+            $window->insertExpr(
                 [\@result],
-                $DB::window->{'data_list'},
+                $window->{'data_list'},
                 \@result, $expr->{'expr'}, $expr->{'depth'}
             );
         }
@@ -254,9 +255,8 @@ sub Initialize {
     return if $DB::ptkdb::isInitialized;
     $DB::ptkdb::isInitialized = 1;
 
-    $DB::window = new Devel::ptkdb;
-
-    $DB::window->do_user_init_files();
+    my $window = Devel::ptkdb::window();
+    $window->do_user_init_files();
 
     $DB::dbint_handler_save = $SIG{'INT'}         unless $DB::sigint_disable;    # saves the old handler
     $SIG{'INT'}             = "DB::dbint_handler" unless $DB::sigint_disable;
@@ -272,7 +272,7 @@ sub Initialize {
         #
         # Restore expressions and breakpoints in state file
         #
-        $DB::window->restoreStateFile($ENV{'PTKDB_RESTART_STATE_FILE'});
+        $window->restoreStateFile($ENV{'PTKDB_RESTART_STATE_FILE'});
         unlink $ENV{'PTKDB_RESTART_STATE_FILE'};    # delete state file
 
         # print "restoring state from $ENV{'PTKDB_RESTART_STATE_FILE'}\n" ;
@@ -288,18 +288,19 @@ sub restoreState {
     my ($fName) = @_;
     my ($stateFile, $files, $expr_list, $eval_saved_text, $main_win_geometry, $restoreName);
 
+    my $window = Devel::ptkdb::window();
+
     $stateFile = makeFileSaveName($fName);
 
     if (-e $stateFile && -r $stateFile) {
-        ($files, $expr_list, $eval_saved_text, $main_win_geometry)
-            = $DB::window->get_state($stateFile);
+        ($files, $expr_list, $eval_saved_text, $main_win_geometry) = $window->get_state($stateFile);
         &DB::restore_breakpoints_from_save($files);
-        $DB::window->{'expr_list'}     = $expr_list if defined $expr_list;
-        $DB::window->{eval_saved_text} = $eval_saved_text;
+        $window->{'expr_list'}     = $expr_list if defined $expr_list;
+        $window->{eval_saved_text} = $eval_saved_text;
 
         if ($main_win_geometry) {
             # restore the height and width of the window
-            $DB::window->{main_window}->geometry($main_win_geometry);
+            $window->{main_window}->geometry($main_win_geometry);
         }
     }
 
@@ -321,12 +322,13 @@ sub makeFileSaveName {
 sub save_state_file {
     my ($fname) = @_;
     my ($files, $d, $saveStr);
+    my $window = Devel::ptkdb::window();
 
     $files = &DB::breakpoints_to_save();
 
     $d = Data::Dumper->new(
-        [$files,  $DB::window->{'expr_list'}, ""],
-        ["files", "expr_list",                "eval_saved_text"]
+        [$files,  $window->{'expr_list'}, ""],
+        ["files", "expr_list",            "eval_saved_text"]
     );
 
     $d->Purity(1);
@@ -345,45 +347,45 @@ sub save_state_file {
 
 sub save_state_callback {
     my ($name_in) = @_;
-    my ($top,   $entry,   $okayBtn,   $win);
+    my ($top,   $entry,   $okayBtn);
     my ($fname, $saveSub, $cancelSub, $saveName, $eval_saved_text, $d);
     my ($files, $main_win_geometry);
     #
     # Create our default name
     #
-    $win = $DB::window;
+    my $window = Devel::ptkdb::window();
 
     #
     # Extract the height and width of our window
     #
-    $main_win_geometry = $win->{main_window}->geometry;
+    $main_win_geometry = $window->{main_window}->geometry;
 
-    if (defined $win->{save_box}) {
-        $win->{save_box}->raise;
-        $win->{save_box}->focus;
+    if (defined $window->{save_box}) {
+        $window->{save_box}->raise;
+        $window->{save_box}->focus;
         return;
     }
 
     $saveName = $name_in || makeFileSaveName($DB::startupFname);
 
     $saveSub = sub {
-        $win->{'event'} = 'null';
+        $window->{'event'} = 'null';
 
         my $saveStr;
 
-        delete $win->{save_box};
+        delete $window->{save_box};
 
-        if (exists $win->{eval_window}) {
-            $eval_saved_text = $win->{eval_text}->get('0.0', 'end');
+        if (exists $window->{eval_window}) {
+            $eval_saved_text = $window->{eval_text}->get('0.0', 'end');
         } else {
-            $eval_saved_text = $win->{eval_saved_text};
+            $eval_saved_text = $window->{eval_saved_text};
         }
 
         $files = &DB::breakpoints_to_save();
 
         $d = Data::Dumper->new(
-            [$files,  $win->{'expr_list'}, $eval_saved_text,  $main_win_geometry],
-            ["files", "expr_list",         "eval_saved_text", "main_win_geometry"]
+            [$files,  $window->{'expr_list'}, $eval_saved_text,  $main_win_geometry],
+            ["files", "expr_list",            "eval_saved_text", "main_win_geometry"]
         );
 
         $d->Purity(1);
@@ -400,29 +402,32 @@ sub save_state_callback {
 
             close $F;
         };
-        $win->DoAlert($@) if $@;
+        $window->DoAlert($@) if $@;
     };
 
     $cancelSub = sub {
-        delete $win->{'save_box'};
+        delete $window->{'save_box'};
     };
 
     #
     # Create a dialog
     #
 
-    $win->{'save_box'} = $win->simplePromptBox("Save Config?", $saveName, $saveSub, $cancelSub);
+    $window->{'save_box'}
+        = $window->simplePromptBox("Save Config?", $saveName, $saveSub, $cancelSub);
 
 }
 
 sub restore_state_callback {
     my ($top, $restoreSub);
 
+    my $window = Devel::ptkdb::window();
+
     $restoreSub = sub {
-        $DB::window->restoreStateFile($Devel::ptkdb::promptString);
+        $window->restoreStateFile($Devel::ptkdb::promptString);
     };
 
-    $top = $DB::window->simplePromptBox(
+    $top = $window->simplePromptBox(
         "Restore Config?",
         makeFileSaveName($DB::startupFname), $restoreSub
     );
@@ -494,8 +499,9 @@ sub breakPointEvalExpr {
     @result = &DB::dbeval($package, $brkPt->{'expr'});
 
     use strict;
+    my $window = Devel::ptkdb::window();
 
-    $DB::window->DoAlert($@) if $@;
+    $window->DoAlert($@) if $@;
 
     return ($result[0] or @result);    # we could have a case where the 1st
                                        # element is undefined but subsequent
@@ -583,14 +589,15 @@ sub DB {
             return;
         }
 
-        if (!$DB::window) {    # not setup yet
+        my $window = Devel::ptkdb::window();
+        if (!$window) {    # not setup yet
             $@ = $DB::save_err;
             return;
         }
 
-        $DB::window->setup_main_window() unless $DB::window->{'main_window'};
+        $window->setup_main_window() unless $window->{'main_window'};
 
-        $DB::window->EnterActions();
+        $window->EnterActions();
 
         my ($saveP);
         $saveP = $^P;
@@ -615,10 +622,10 @@ sub DB {
             $SIG{'INT'} = "DB::dbexit" unless $DB::dbint_handler_save;
         }
 
-        #$DB::window->{main_window}->raise() ; # bring us to the top make sure OUR event loop runs
-        $DB::window->{main_window}->focus();
+        #$window->{main_window}->raise() ; # bring us to the top make sure OUR event loop runs
+        $window->{main_window}->focus();
 
-        $DB::window->set_file($filename, $line);
+        $window->set_file($filename, $line);
         #
         # Refresh the exprs to see if anything has changed
         #
@@ -628,16 +635,16 @@ sub DB {
         # Update subs Page if necessary
         #
         $cnt = scalar keys %DB::sub;
-        if ($cnt != $DB::window->{'subs_list_cnt'} && $DB::window->{'subs_page_activated'}) {
-            $DB::window->fill_subs_page();
-            $DB::window->{'subs_list_cnt'} = $cnt;
+        if ($cnt != $window->{'subs_list_cnt'} && $window->{'subs_page_activated'}) {
+            $window->fill_subs_page();
+            $window->{'subs_list_cnt'} = $cnt;
         }
         #
         # Update the subroutine stack menu
         #
-        $DB::window->refresh_stack_menu();
+        $window->refresh_stack_menu();
 
-        $DB::window->{run_flag} = 1;
+        $window->{run_flag} = 1;
 
         my ($evt, @result, $r);
 
@@ -645,35 +652,35 @@ sub DB {
             #
             # we wait here for something to do
             #
-            $evt = $DB::window->main_loop();
+            $evt = $window->main_loop();
 
             last if ($evt eq 'step');
 
             $DB::single = 0 if ($evt eq 'run');
 
             if ($evt eq 'balloon_eval') {
-                $DB::window->code_motion_eval(&DB::dbeval($package, $DB::window->{'balloon_expr'}));
+                $window->code_motion_eval(&DB::dbeval($package, $window->{'balloon_expr'}));
                 next;
             }
 
             if ($evt eq 'qexpr') {
                 my $str;
-                @result = &DB::dbeval($package, $DB::window->{'qexpr'});
-                $DB::window->{'quick_entry'}->delete(0, 'end');    # clear old text
-                if (exists $DB::window->{'quick_dumper'}) {
-                    $DB::window->{'quick_dumper'}->Reset();
-                    $DB::window->{'quick_dumper'}->Values([$#result == 0 ? @result : \@result]);
-                    if ($DB::window->{'quick_dumper'}->can('Dumpxs')) {
-                        $str = $DB::window->{'quick_dumper'}->Dumpxs();
+                @result = &DB::dbeval($package, $window->{'qexpr'});
+                $window->{'quick_entry'}->delete(0, 'end');    # clear old text
+                if (exists $window->{'quick_dumper'}) {
+                    $window->{'quick_dumper'}->Reset();
+                    $window->{'quick_dumper'}->Values([$#result == 0 ? @result : \@result]);
+                    if ($window->{'quick_dumper'}->can('Dumpxs')) {
+                        $str = $window->{'quick_dumper'}->Dumpxs();
                     } else {
-                        $str = $DB::window->{'quick_dumper'}->Dump();
+                        $str = $window->{'quick_dumper'}->Dump();
                     }
                 } else {
                     $str = "@result";
                 }
-                $DB::window->{'quick_entry'}->insert(0, $str);             #enter the text
-                $DB::window->{'quick_entry'}->selectionRange(0, 'end');    # select it
-                $evt = 'update';                                           # force an update on the expressions
+                $window->{'quick_entry'}->insert(0, $str);             #enter the text
+                $window->{'quick_entry'}->selectionRange(0, 'end');    # select it
+                $evt = 'update';                                       # force an update on the expressions
             }
 
             if ($evt eq 'expr') {
@@ -683,24 +690,24 @@ sub DB {
                 # already have it.
                 #
 
-                if (grep $_->{'expr'} eq $DB::window->{'expr'}, @{ $DB::window->{'expr_list'} }) {
-                    $DB::window->DoAlert("$DB::window->{'expr'} is already listed");
+                if (grep $_->{'expr'} eq $window->{'expr'}, @{ $window->{'expr_list'} }) {
+                    $window->DoAlert("$window->{'expr'} is already listed");
                     next;
                 }
 
-                @result = &DB::dbeval($package, $DB::window->{expr});
+                @result = &DB::dbeval($package, $window->{expr});
 
                 if (@result == 1) {
-                    $r = $DB::window->insertExpr(
+                    $r = $window->insertExpr(
                         [$result[0]],
-                        $DB::window->{'data_list'},
-                        $result[0], $DB::window->{'expr'}, $Devel::ptkdb::expr_depth
+                        $window->{'data_list'},
+                        $result[0], $window->{'expr'}, $Devel::ptkdb::expr_depth
                     );
                 } else {
-                    $r = $DB::window->insertExpr(
+                    $r = $window->insertExpr(
                         [\@result],
-                        $DB::window->{'data_list'},
-                        \@result, $DB::window->{'expr'}, $Devel::ptkdb::expr_depth
+                        $window->{'data_list'},
+                        \@result, $window->{'expr'}, $Devel::ptkdb::expr_depth
                     );
                 }
 
@@ -709,8 +716,8 @@ sub DB {
                 # and it if wasn't added sucessfully it won't be reevalled the
                 # next time through.
                 #
-                push @{ $DB::window->{'expr_list'} },
-                    { 'expr' => $DB::window->{'expr'}, 'depth' => $Devel::ptkdb::expr_depth }
+                push @{ $window->{'expr_list'} },
+                    { 'expr' => $window->{'expr'}, 'depth' => $Devel::ptkdb::expr_depth }
                     if $r;
 
                 next;
@@ -723,10 +730,10 @@ sub DB {
                 #
                 # Reevaluate the contents of the expression eval window
                 #
-                my $txt    = $DB::window->{'eval_text'}->get('0.0', 'end');
+                my $txt    = $window->{'eval_text'}->get('0.0', 'end');
                 my @result = &DB::dbeval($package, $txt);
 
-                $DB::window->updateEvalWindow(@result);
+                $window->updateEvalWindow(@result);
 
                 next;
             }
@@ -735,7 +742,7 @@ sub DB {
         $^P = $saveP;
         $SIG{'INT'} = "DB::dbint_handler" unless $DB::sigint_disable;    # set our signal handler
 
-        $DB::window->LeaveActions();
+        $window->LeaveActions();
 
         $@      = $DB::save_err;
         $DB::on = 0;
