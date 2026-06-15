@@ -24,6 +24,7 @@ use Tk::Table;
 #
 
 our $window;
+our $window_is_being_built = 0;
 
 use vars qw(@dbline);    # Again, this breaks code if changed to "our".
 my $isWin32 = $^O eq 'MSWin32';
@@ -76,7 +77,14 @@ sub debug_dump {
 }
 
 sub window {
-    return $window ||= __PACKAGE__->new;
+    return $window if defined $window;
+
+    return undef if $window_is_being_built;    ## no critic (Subroutines::ProhibitExplicitReturnUndef)
+
+    local $window_is_being_built = 1;
+    $window = __PACKAGE__->new;
+
+    return $window;
 }
 
 sub has_window {
@@ -210,6 +218,7 @@ sub brkpt {
     my ($fName, @idx) = @_;
     my ($offset);
     local (*dbline) = $main::{ '_<' . $fName };
+    my $window = Devel::ptkdb::window();
 
     $offset = $dbline[1] =~ /use\s+.*Devel::_?ptkdb/ ? 1 : 0;
 
@@ -219,7 +228,7 @@ sub brkpt {
             print "$filename:$line:  $fName line $_ is not breakable\n";
             next;
         }
-        $DB::window->insertBreakpoint($fName, $_, 1);    # insert a simple breakpoint
+        $window->insertBreakpoint($fName, $_, 1);    # insert a simple breakpoint
     }
 }
 
@@ -230,6 +239,7 @@ sub condbrkpt {
     my ($fname) = shift;
     my ($offset);
     local (*dbline) = $main::{ '_<' . $fname };
+    my $window = Devel::ptkdb::window();
 
     $offset = $dbline[1] =~ /use\s+.*Devel::_?ptkdb/ ? 1 : 0;
 
@@ -241,13 +251,14 @@ sub condbrkpt {
             print "$filename:$line:  $fname line $index is not breakable\n";
             next;
         }
-        $DB::window->insertBreakpoint($fname, $index, 1, $expr);    # insert a simple breakpoint
+        $window->insertBreakpoint($fname, $index, 1, $expr);    # insert a simple breakpoint
     }
 
 }
 
 sub brkonsub {
     my (@names) = @_;
+    my $window = Devel::ptkdb::window();
 
     for (@names) {
 
@@ -262,7 +273,7 @@ sub brkonsub {
 
         for ($2 .. $3) {
             next unless &DB::checkdbline($1, $_);
-            $DB::window->insertBreakpoint($1, $_, 1);
+            $window->insertBreakpoint($1, $_, 1);
             last;                                      # only need the one breakpoint
         }
     }
@@ -294,8 +305,9 @@ sub brkonsub_regex {
 #
 sub textTagConfigure {
     my ($tag, @config) = @_;
+    my $window = Devel::ptkdb::window();
 
-    $DB::window->{'text'}->tagConfigure($tag, @config);
+    $window->{'text'}->tagConfigure($tag, @config);
 
 }
 
@@ -303,8 +315,9 @@ sub textTagConfigure {
 # Change the tabs in the text field
 #
 sub setTabs {
+    my $window = Devel::ptkdb::window();
 
-    $DB::window->{'text'}->configure(-tabs => [@_]);
+    $window->{'text'}->configure(-tabs => [@_]);
 
 }
 
@@ -314,7 +327,8 @@ sub setTabs {
 # the expression list window.
 #
 sub add_exprs {
-    push @{ $DB::window->{'expr_list'} },
+    my $window = Devel::ptkdb::window();
+    push @{ $window->{'expr_list'} },
         map { 'expr' => $_, 'depth' => $Devel::ptkdb::expr_depth }, @_;
 }
 
@@ -323,7 +337,8 @@ sub add_exprs {
 # ptkdb sets up it's windows
 #
 sub register_user_window_init {
-    push @{ $DB::window->{'user_window_init_list'} }, @_;
+    my $window = Devel::ptkdb::window();
+    push @{ $window->{'user_window_init_list'} }, @_;
 }
 
 #
@@ -331,11 +346,13 @@ sub register_user_window_init {
 # ptkdb enters from code
 #
 sub register_user_DB_entry {
-    push @{ $DB::window->{'user_window_DB_entry_list'} }, @_;
+    my $window = Devel::ptkdb::window();
+    push @{ $window->{'user_window_DB_entry_list'} }, @_;
 }
 
 sub get_notebook_widget {
-    return $DB::window->{'notebook'};
+    my $window = Devel::ptkdb::window();
+    return $window->{'notebook'};
 }
 
 #
@@ -460,6 +477,7 @@ sub DoQuit {
 sub DoOpen {
     my $self = shift;
     my ($topLevel, $listBox, $frame, $selectedFile, @fList);
+    my $window = Devel::ptkdb::window();
 
     #
     # subroutine we call when we've selected a file
@@ -468,7 +486,7 @@ sub DoOpen {
     my $chooseSub = sub {
         $selectedFile = $listBox->get('active');
         print "attempting to open $selectedFile\n";
-        $DB::window->set_file($selectedFile, 0);
+        $window->set_file($selectedFile, 0);
         destroy $topLevel;
     };
 
@@ -528,9 +546,10 @@ sub do_tabs {
     my ($w, $result, $tabs_cfg);
     require Tk::Dialog;
 
-    $w = $DB::window->{'main_window'}->DialogBox(-title => "Tabs", -buttons => [qw/Okay Cancel/]);
+    my $window = Devel::ptkdb::window();
+    $w = $window->{'main_window'}->DialogBox(-title => "Tabs", -buttons => [qw/Okay Cancel/]);
 
-    $tabs_cfg = $DB::window->{'text'}->cget(-tabs);
+    $tabs_cfg = $window->{'text'}->cget(-tabs);
 
     $tabs_str = join " ", @$tabs_cfg if $tabs_cfg;
 
@@ -542,14 +561,15 @@ sub do_tabs {
 
     return unless $result eq 'Okay';
 
-    $DB::window->{'text'}->configure(-tabs => [split /\s/, $tabs_str]);
+    $window->{'text'}->configure(-tabs => [split /\s/, $tabs_str]);
 }
 
 sub close_ptkdb_window {
     my ($self) = @_;
 
-    $DB::window->{'event'} = 'run';
-    $self->{current_file}  = "";      # force a file reset
+    my $window = Devel::ptkdb::window();
+    $window->{'event'}    = 'run';
+    $self->{current_file} = "";      # force a file reset
     $self->{'main_window'}->destroy;
     $self->{'main_window'} = undef;
 }
@@ -645,20 +665,22 @@ sub setup_menu_bar {
 
     # Control Menu
 
-    my $runSub = sub { $DB::step_over_depth = -1; $self->{'event'} = 'run' };
-
-    my $runToSub = sub { $DB::window->{'event'} = 'run' if $DB::window->SetBreakPoint(1); };
+    my $runSub   = sub { $DB::step_over_depth = -1; $self->{'event'} = 'run' };
+    my $window   = Devel::ptkdb::window();
+    my $runToSub = sub {
+        $self->{'event'} = 'run' if $window->SetBreakPoint(1);
+    };
 
     my $stepOverSub = sub {
         &DB::SetStepOverBreakPoint(0);
         $DB::single = 1;
-        $DB::window->{'event'} = 'step';
+        $self->{'event'} = 'step';
     };
 
     my $stepInSub = sub {
-        $DB::step_over_depth   = -1;
-        $DB::single            = 1;
-        $DB::window->{'event'} = 'step';
+        $DB::step_over_depth = -1;
+        $DB::single          = 1;
+        $self->{'event'}     = 'step';
     };
 
     my $returnSub = sub {
@@ -683,8 +705,8 @@ sub setup_menu_bar {
         [   'command'  => 'Clear All Breakpoints',
             -underline => 6,
             -command   => sub {
-                $DB::window->removeAllBreakpoints($DB::window->{current_file});
-                &DB::clearalldblines();
+                $self->removeAllBreakpoints($window->{current_file});
+                DB::clearalldblines();
             }
         ],
         '-',
@@ -1039,7 +1061,8 @@ sub save_bookmarks {
 #
 sub expr_expand {
     my ($path) = @_;
-    my $hl = $DB::window->{'data_list'};
+    my $window = Devel::ptkdb::window();
+    my $hl     = $window->{'data_list'};
     my ($parent, $root, $index, @children, $depth);
 
     $parent = $path;
@@ -1055,7 +1078,7 @@ sub expr_expand {
     # Determine the index of the root of our expression
     #
     $index = 0;
-    for (@{ $DB::window->{'expr_list'} }) {
+    for (@{ $window->{'expr_list'} }) {
         last if $_->{'expr'} eq $root;
         $index += 1;
     }
@@ -1070,18 +1093,18 @@ sub expr_expand {
 
         $hl->deleteOffsprings($path);
 
-        $DB::window->{'expr_list'}->[$index]->{'depth'} = $depth - 1;    # adjust our depth
+        $window->{'expr_list'}->[$index]->{'depth'} = $depth - 1;    # adjust our depth
     } else {
         #
         # Delete the existing tree and insert a new one
         #
         $hl->deleteEntry($root);
         $hl->add($root, -at => $index);
-        $DB::window->{'expr_list'}->[$index]->{'depth'} += $Devel::ptkdb::add_expr_depth;
+        $window->{'expr_list'}->[$index]->{'depth'} += $Devel::ptkdb::add_expr_depth;
         #
         # Force an update on our expressions
         #
-        $DB::window->{'event'} = 'update';
+        $window->{'event'} = 'update';
     }
 }
 
@@ -2696,9 +2719,12 @@ sub setupEvalWindow {
         @Devel::ptkdb::eval_text_font
     )->pack(-side => 'top', -fill => 'both', -expand => 1);
 
-    my $btn = $top->Button(
+    my $window = Devel::ptkdb::window();
+    my $btn    = $top->Button(
         -text    => 'Eval...',
-        -command => sub { $DB::window->{event} = 'reeval'; }
+        -command => sub {
+            $window->{event} = 'reeval';
+        }
     )->pack(-side => 'left', -fill => 'x', -expand => 1);
 
     $dismissSub = sub {
@@ -2784,20 +2810,20 @@ __STR__
 #
 sub SetBreakPoint {
     my ($self, $isTemp) = @_;
-    my $dbw    = $DB::window;
-    my $lineno = $dbw->get_lineno();
-    my $expr   = $dbw->clear_entry_text();
+    my $window = Devel::ptkdb::window();
+    my $lineno = $window->get_lineno();
+    my $expr   = $window->clear_entry_text();
 
-    if (!&DB::checkdbline($DB::window->{current_file}, $lineno + $self->{'line_offset'})) {
-        $dbw->DoAlert("line $lineno in $DB::window->{current_file} is not breakable");
+    if (!&DB::checkdbline($window->{current_file}, $lineno + $self->{'line_offset'})) {
+        $window->DoAlert("line $lineno in $window->{current_file} is not breakable");
         return 0;
     }
 
     if (!$isTemp) {
-        $dbw->insertBreakpoint($DB::window->{current_file}, $lineno, 1, $expr);
+        $window->insertBreakpoint($window->{current_file}, $lineno, 1, $expr);
         return 1;
     } else {
-        $dbw->insertTempBreakpoint($DB::window->{current_file}, $lineno);
+        $window->insertTempBreakpoint($window->{current_file}, $lineno);
         return 1;
     }
 
@@ -2808,26 +2834,27 @@ sub UnsetBreakPoint {
     my ($self) = @_;
     my $lineno = $self->get_lineno();
 
-    $self->removeBreakpoint($DB::window->{current_file}, $lineno);
+    my $window = Devel::ptkdb::window();
+    $self->removeBreakpoint($window->{current_file}, $lineno);
 }
 
 sub balloon_post {
-    my $self = $DB::window;
-    my $txt  = $DB::window->{'text'};
+    my $window = Devel::ptkdb::window();
+    my $txt    = $window->{'text'};
 
-    return 0 if ($self->{'expr_ballon_msg'} eq "") || ($self->{'balloon_expr'} eq "");    # don't post for an empty string
+    return 0 if ($window->{'expr_ballon_msg'} eq "") || ($window->{'balloon_expr'} eq "");    # don't post for an empty string
 
-    return $self->{'balloon_coord'};
+    return $window->{'balloon_coord'};
 }
 
 sub balloon_motion {
     my ($txt, $x, $y) = @_;
     my ($offset_x, $offset_y) = ($x + 4, $y + 4);
-    my $self = $DB::window;
-    my $txt2 = $self->{'text'};
+    my $window = Devel::ptkdb::window();
+    my $txt2   = $window->{'text'};
     my $data;
 
-    $self->{'balloon_coord'} = "$offset_x,$offset_y";
+    $window->{'balloon_coord'} = "$offset_x,$offset_y";
 
     $x -= $txt->rootx;
     $y -= $txt->rooty;
@@ -2838,20 +2865,20 @@ sub balloon_motion {
     if ($txt2->tagRanges('sel')) {    # check to see if 'sel' tag exists (return undef value)
         $data = $txt2->get("sel.first", "sel.last");    # get the text between the 'first' and 'last' point of the sel (selection) tag
     } else {
-        $data = $DB::window->retrieve_text_expr($x, $y);
+        $data = $window->retrieve_text_expr($x, $y);
     }
 
     if (!$data) {
-        $self->{'balloon_expr'} = "";
+        $window->{'balloon_expr'} = "";
         return 0;
     }
 
-    return 0 if ($data eq $self->{'balloon_expr'});    # nevermind if it's the same expression
+    return 0 if ($data eq $window->{'balloon_expr'});    # nevermind if it's the same expression
 
-    $self->{'event'}        = 'balloon_eval';
-    $self->{'balloon_expr'} = $data;
+    $window->{'event'}        = 'balloon_eval';
+    $window->{'balloon_expr'} = $data;
 
-    return 1;                                          # ballon will be canceled and a new one put up(maybe)
+    return 1;                                            # ballon will be canceled and a new one put up(maybe)
 }
 
 sub retrieve_text_expr {
@@ -2993,7 +3020,8 @@ sub DoRestart {
 
 sub stop_on_warning_cb {
     &$DB::ptkdb::warn_sig_save() if $DB::ptkdb::warn_sig_save;    # call any previously registered warning
-    $DB::window->DoAlert(@_);
+    my $window = Devel::ptkdb::window();
+    $window->DoAlert(@_);
     $DB::single = 1;                                              # forces debugger to stop next time
 }
 
@@ -3014,7 +3042,7 @@ sub set_stop_on_warning {
 }
 
 # Avoid circular use issues while refactoring.
-# require Devel::ptkdb::DBHook;
+require Devel::ptkdb::DBHook;
 
 1;
 

@@ -7,11 +7,6 @@ use vars qw(@dbline %dbline );
 
 use Carp;
 
-use Devel::ptkdb;
-
-our $header = "ptkdb.pm version $Devel::ptkdb::VERSION";
-
-#
 # Here's the clue...
 # eval only seems to eval the context of
 # the executing script while in the DB
@@ -256,6 +251,8 @@ sub Initialize {
     $DB::ptkdb::isInitialized = 1;
 
     my $window = Devel::ptkdb::window();
+    return unless defined $window;
+
     $window->do_user_init_files();
 
     $DB::dbint_handler_save = $SIG{'INT'}         unless $DB::sigint_disable;    # saves the old handler
@@ -424,7 +421,10 @@ sub restore_state_callback {
     my $window = Devel::ptkdb::window();
 
     $restoreSub = sub {
-        $window->restoreStateFile($Devel::ptkdb::promptString);
+        {
+            no warnings 'once';
+            $window->restoreStateFile($Devel::ptkdb::promptString);
+        }
     };
 
     $top = $window->simplePromptBox(

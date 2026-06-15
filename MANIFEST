@@ -4,7 +4,8 @@ lib/Devel/ptkdb/DBHook.pm
 Makefile.PL
 MANIFEST                        #This list of files
 README
-t/00.load.t
+t/00.load.Devel-ptkdb.t
+t/00.load.DBHook.t
 t/perlcritic.t
 .perltidyrc
 t/tidy.t
