@@ -4,8 +4,10 @@ package Devel::ptkdb::State;
 
 use strict;
 use warnings;
-use Cwd qw(realpath);
+use Cwd qw(getcwd realpath);
 use Data::Dumper;
+use File::Basename qw(dirname basename);
+use File::Spec;
 
 # Object static data
 my %S = (state_api_version => '2.0.0');
@@ -16,9 +18,6 @@ sub new {
     my $self = bless {}, $class;
     $self->{debugger}        = $args{debugger};
     $self->{state_file_name} = $self->default_state_file_name();
-    DBG: 0
-        && Devel::ptkdb::debug_say(
-        msg => "State new, state file name is " . $self->{state_file_name} || '');
     return $self;
 }
 
@@ -28,7 +27,16 @@ sub default_state_file_name {
     my $script = Cwd::realpath($0) || $0;
     $script =~ s/\.(?:pl|pm|t)\z//;
     $script .= ".ptkdb";
-    DBG: 0 && Devel::ptkdb::debug_say(msg => "in default_state_file_name, returning '$script'");
+
+    if (!-e $script) {
+        if (!-w dirname($script)) {
+            my $cwd = getcwd();
+            $self->{debugger}->DoAlert(
+                "'$script' is not writable. Assuming you are debugging a file you do not own. Defaulting to current directory '$cwd'."
+            );
+            $script = File::Spec->catfile($cwd, basename($script));
+        }
+    }
     return $script;
 }
 
@@ -62,15 +70,6 @@ sub apply_state {
 
     my $debugger = $self->{debugger};
 
-    DBG: Devel::ptkdb::debug_dump(
-        msg    => 'state arg',
-        action => 'warntrace',
-        dump   => [
-            {   name => 'state',
-                ref  => $state
-            }
-        ]
-    );
     DB::restore_breakpoint_state($state->{files});
 
     my $save_cur_file = $debugger->{current_file};
@@ -90,8 +89,6 @@ sub apply_state {
 
 sub write_state_file {
     my ($self, $state_file_name, $state) = @_;
-
-    require Data::Dumper;
 
     open my $fh, '>', $state_file_name
         or die "Could not open state file $state_file_name: $!";
@@ -114,8 +111,9 @@ sub read_state_file {
         or ref($state) ne 'HASH'
         or not exists $state->{version}
         or $state->{version} ne $S{state_api_version}) {
-        warn
-            "State file $state_file_name format does not match the current format. Not loading, Please re-establish your breakpoints, variable watches, etc. and save a new version.\n";
+        $self->{debugger}->DoAlert(
+            "State file $state_file_name format does not match the current format. Not loading, Please re-establish your breakpoints, variable watches, etc. and save a new version."
+        );
         return {};
     }
 
@@ -157,38 +155,38 @@ sub restore_state_file {
     return 1;
 }
 
-sub simplePromptBox {
-    my ($self, $title, $defaultText, $okaySub, $cancelSub) = @_;
-    my ($top, $entry, $okayBtn);
+sub choose_state_file {
+    my ($self, %args) = @_;
 
-    my $debugger = $self->{debugger};
+    my $debugger        = $self->{debugger};
+    my $main_window     = $debugger->{main_window};
+    my $state_file_name = $args{initial} || $self->state_file_name();
+    my $initial_dir     = dirname($state_file_name);
+    my $initial_file    = basename($state_file_name);
 
-    $top = $debugger->{main_window}->Toplevel(-title => $title, -overanchor => 'cursor');
+    my %opts = (
+        -title            => $args{title} || 'Select ptkdb state file',
+        -initialdir       => $initial_dir,
+        -initialfile      => $initial_file,
+        -defaultextension => '.ptkdb',
+        -filetypes        => [
+            ['ptkdb state files', ['.ptkdb']],
+            ['All files',         ['*']],
+        ],
+        -force => 1
+    );
 
-    $Devel::ptkdb::promptString = $defaultText;
+    my $chosen;
+    if (($args{mode} || '') eq 'save') {
+        $chosen = $main_window->getSaveFile(%opts);
+    } else {
+        $chosen = $main_window->getOpenFile(%opts);
+    }
 
-    $entry = $top->Entry('-textvariable' => \$Devel::ptkdb::promptString)
-        ->pack(-side => 'top', -fill => 'both', -expand => 1);
+    return unless defined $chosen && length $chosen;
 
-    $okayBtn = $top->Button(
-        -text => "Okay",
-        @Devel::ptkdb::button_font, -command => sub { &$okaySub(); $top->destroy; }
-    )->pack(-side => 'left', -fill => 'both', -expand => 1);
-
-    $top->Button(
-        -text    => "Cancel",
-        -command => sub { &$cancelSub() if $cancelSub; $top->destroy() },
-        @Devel::ptkdb::button_font,
-    )->pack(-side => 'left', -fill => 'both', -expand => 1);
-
-    $entry->icursor('end');
-
-    $entry->selectionRange(0, 'end') if $entry->can('selectionRange');    # some win32 Tk installations can't do this
-
-    $entry->focus();
-
-    return $top;
-
+    $self->state_file_name($chosen);
+    return $chosen;
 }
 
 sub save_state_callback {
@@ -196,26 +194,16 @@ sub save_state_callback {
 
     my $debugger = $self->{debugger};
 
-    my $state_file_name = $name_in || $self->state_file_name();
-
-    my $save_sub = sub {
-        my $chosen;
-        ## TODO: Get the complete name from the file dialog
-        eval { $self->save_state_file($chosen) };
-        $debugger->DoAlert($@) if $@;
-    };
-
-    my $cancel_sub = sub {
-        ## TO DO
-        delete $self->{save_box};
-    };
-
-    $self->{save_box} = $self->simplePromptBox(
-        "Save Config?",
-        $state_file_name,
-        $save_sub,
-        $cancel_sub,
+    my $chosen = $self->choose_state_file(
+        mode    => 'save',
+        title   => 'Save ptkdb state',
+        initial => $name_in || $self->state_file_name(),
     );
+
+    return unless defined $chosen;
+
+    eval { $self->save_state_file($chosen) };
+    $debugger->DoAlert($@) if $@;
 }
 
 sub restore_state_callback {
@@ -223,26 +211,16 @@ sub restore_state_callback {
 
     my $debugger = $self->{debugger};
 
-    my $state_file_name = $name_in || $self->state_file_name();
-
-    my $restore_sub = sub {
-        my $chosen;
-        ## TODO: Get the complete name from the file dialog
-        eval { $self->restore_state_file($chosen) };
-        $debugger->DoAlert($@) if $@;
-    };
-
-    my $cancel_sub = sub {
-        ## TO DO
-        delete $self->{save_box};
-    };
-
-    $self->simplePromptBox(
-        "Restore Config?",
-        $state_file_name,
-        $restore_sub,
-        $cancel_sub
+    my $chosen = $self->choose_state_file(
+        mode    => 'open',
+        title   => 'Restore ptkdb state',
+        initial => $name_in || $self->state_file_name(),
     );
+
+    return unless defined $chosen;
+
+    eval { $self->restore_state_file($chosen) };
+    $debugger->DoAlert($@) if $@;
 }
 
 1;

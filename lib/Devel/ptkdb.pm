@@ -1710,7 +1710,6 @@ sub DoAlert {
     my $okaySub = sub {
         destroy $dlg;
     };
-
     $dlg = $self->{main_window}->Toplevel(-title => $title || "Alert", -overanchor => 'cursor');
 
     $dlg->Label(-text => $msg)->pack(-side => 'top');

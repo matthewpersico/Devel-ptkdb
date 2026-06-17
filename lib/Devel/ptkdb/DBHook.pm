@@ -123,7 +123,7 @@ sub clearalldblines {
             delete $dbline{$dbkey};
             {
                 no warnings 'once';
-                next unless $brkPt && $clearSub;
+                next unless $brkPt && $clearsub;
             }
             &$clearsub($brkPt);    # if specificed, call the sub routine to clear the breakpoint
         }
