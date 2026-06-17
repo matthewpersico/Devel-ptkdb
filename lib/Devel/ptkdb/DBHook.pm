@@ -7,6 +7,208 @@ use vars qw(@dbline %dbline );
 
 use Carp;
 
+## ===========================================================================
+## dbline handlers
+sub _dbline_key {
+    my ($fname) = @_;
+    return unless defined $fname && length $fname;
+
+    $fname =~ s/^_<//;    # tolerate old saved state files temporarily
+    return '_<' . $fname;
+}
+
+sub _dbline_glob {
+    my ($fname) = @_;
+
+    my $key = _dbline_key($fname);
+    return unless defined $key;
+    return unless exists $main::{$key};
+
+    return $main::{$key};
+}
+
+sub _dbline_array {
+    my ($fname) = @_;
+
+    my $glob = _dbline_glob($fname);
+    return unless $glob;
+
+    return *{$glob}{ARRAY};
+}
+
+sub _dbline_hash {
+    my ($fname) = @_;
+
+    my $glob = _dbline_glob($fname);
+    return unless $glob;
+
+    return *{$glob}{HASH};
+}
+
+sub dbline_offset {
+    my ($fname) = @_;
+
+    my $lines = _dbline_array($fname);
+    return 0 unless $lines;
+
+    return defined $lines->[1] && $lines->[1] =~ /use\s+.*Devel::_?ptkdb/ ? 1 : 0;
+}
+
+sub dbline_lines {
+    my ($fname) = @_;
+    return _dbline_array($fname);
+}
+
+sub checkdbline {
+    my ($fname, $lineno) = @_;
+
+    my $lines = _dbline_array($fname);
+    return 0 unless $lines;
+
+    return $lines->[$lineno] != 0;
+}
+
+sub setdbline {
+    my ($fname, $lineno, $value) = @_;
+
+    my $breakpoints = _dbline_hash($fname);
+    return 0 unless $breakpoints;
+
+    $breakpoints->{$lineno} = $value;
+    return 1;
+}
+
+sub getdbline {
+    my ($fname, $lineno) = @_;
+
+    my $breakpoints = _dbline_hash($fname);
+    return unless $breakpoints;
+
+    return $breakpoints->{$lineno};
+}
+
+sub getdbtextline {
+    my ($fname, $lineno) = @_;
+
+    my $lines = _dbline_array($fname);
+    return unless $lines;
+
+    return $lines->[$lineno];
+}
+
+sub cleardbline {
+    my ($fname, $lineno, $clearsub) = @_;
+
+    my $breakpoints = _dbline_hash($fname);
+    return unless $breakpoints;
+
+    my $value = delete $breakpoints->{$lineno};
+
+    $clearsub->($value) if $value && $clearsub;
+
+    return $value;
+}
+
+sub getdblineindexes {
+    my ($fname) = @_;
+
+    my $breakpoints = _dbline_hash($fname);
+    return unless $breakpoints;
+
+    return keys %{$breakpoints};
+}
+
+## ===========================================================================
+## berakpoint handlers
+
+# When we restore breakpoints from a state file they've often 'moved' because
+# the file has been editted.
+#
+# We search for the line starting with the original line number, then we walk
+# it back 20 lines, then with line right after the orginal line number and walk
+# forward 20 lines.
+#
+sub fix_breakpoints {
+    my ($lines, @brkPts) = @_;
+
+    my @retList;
+    my $nLines = @{$lines};
+
+    for my $brkPt (@brkPts) {
+        my $startLine = $brkPt->{line} > 20           ? $brkPt->{line} - 20 : 0;
+        my $endLine   = $brkPt->{line} < $nLines - 20 ? $brkPt->{line} + 20 : $nLines;
+
+        for ((reverse $startLine .. $brkPt->{line}), $brkPt->{line} + 1 .. $endLine) {
+            next unless defined $lines->[$_];
+            next unless $brkPt->{text} eq $lines->[$_];
+
+            $brkPt->{line} = $_;
+            push @retList, $brkPt;
+            last;
+        }
+    }
+
+    return @retList;
+}
+
+sub breakpoints_to_save {
+    my $brkList = {};
+
+    for my $key (keys %main::) {
+        next unless $key =~ /^_</;
+
+        my $fname = $key;
+        $fname =~ s/^_<//;
+
+        my $breakpoints = _dbline_hash($fname);
+        next unless $breakpoints;
+
+        my @breaks = values %{$breakpoints};
+        next unless @breaks;
+
+        my $list = [];
+
+        for my $brkPt (@breaks) {
+            push @{$list}, { %{$brkPt} };
+        }
+
+        $brkList->{$fname} = $list;
+    }
+
+    return $brkList;
+}
+
+sub restore_breakpoints_from_save {
+    my ($brkList) = @_;
+
+    while (my ($fname, $list) = each %{$brkList}) {
+        $fname =~ s/^_<//;    # temporary compatibility with old state files
+
+        my $lines       = _dbline_array($fname);
+        my $breakpoints = _dbline_hash($fname);
+
+        next unless $lines && $breakpoints;
+
+        my $offset = 0;
+        $offset = 1 if defined $lines->[1] && $lines->[1] =~ /use\s+.*Devel::_?ptkdb/;
+
+        my @newList = fix_breakpoints($lines, @{$list});
+
+        for my $brkPt (@newList) {
+            if (!DB::checkdbline($fname, $brkPt->{line} + $offset)) {
+                print "Breakpoint $fname:$brkPt->{line} in config file is not breakable.\n";
+                next;
+            }
+
+            $breakpoints->{ $brkPt->{line} } = { %{$brkPt} };
+        }
+    }
+
+    return;
+}
+
+## ===========================================================================
+## state handlers
 sub breakpoint_state {
     return DB::breakpoints_to_save();
 }
@@ -58,57 +260,6 @@ sub updateExprs {
 
 }
 
-# turning strict off (shame shame) because we keep getting errrs for the local(*dbline)
-no strict;    ## no critic TestingAndDebugging::ProhibitNoStrict
-
-sub checkdbline {
-    my ($fname, $lineno) = @_;
-
-    return 0 unless $fname;    # we're getting an undef here on 'Restart...'
-
-    local (*dbline) = $main::{ '_<' . $fname };
-
-    my $flag = $dbline[$lineno] != 0;
-
-    return $flag;
-
-}
-
-#
-# sets a breakpoint 'through' a magic
-# variable that perl is able to interpert
-#
-sub setdbline {
-    my ($fname, $lineno, $value) = @_;
-    local (*dbline) = $main::{ '_<' . $fname };
-
-    $dbline{$lineno} = $value;
-}
-
-sub getdbline {
-    my ($fname, $lineno) = @_;
-    local (*dbline) = $main::{ '_<' . $fname };
-    return $dbline{$lineno};
-}
-
-sub getdbtextline {
-    my ($fname, $lineno) = @_;
-    local (*dbline) = $main::{ '_<' . $fname };
-    return $dbline[$lineno];
-}
-
-sub cleardbline {
-    my ($fname, $lineno, $clearsub) = @_;
-    local (*dbline) = $main::{ '_<' . $fname };
-    my $value;    # just in case we want it for something
-
-    $value = $dbline{$lineno};
-    delete $dbline{$lineno};
-    &$clearsub($value) if $value && $clearsub;
-
-    return $value;
-}
-
 sub clearalldblines {
     my ($clearsub) = @_;
     my ($key, $value, $brkPt);
@@ -132,12 +283,6 @@ sub clearalldblines {
 
 }
 
-sub getdblineindexes {
-    my ($fname) = @_;
-    local (*dbline) = $main::{ '_<' . $fname };
-    return keys %dbline;
-}
-
 sub getbreakpoints {
     my (@fnames) = @_;
     my (@retList);
@@ -149,103 +294,6 @@ sub getbreakpoints {
     }
     return @retList;
 }
-
-#
-# Construct a hash of the files
-# that have breakpoints to save
-#
-sub breakpoints_to_save {
-    my (@breaks, $svBrkPt, $list);
-    my ($brkList);
-
-    $brkList = {};
-
-    for my $file (keys %main::) {    # file loop
-        next unless $file =~ /^_</ && exists $main::{$file};
-        local (*dbline) = $main::{$file};
-
-        next unless @breaks = values %dbline;
-        $list = [];
-        for my $brkPt (@breaks) {
-
-            $svBrkPt = {%$brkPt};    # make a copy of it's data
-
-            push @$list, $svBrkPt;
-
-        }
-
-        $brkList->{$file} = $list;
-
-    }
-
-    return $brkList;
-
-}
-
-#
-# When we restore breakpoints from a state file
-# they've often 'moved' because the file
-# has been editted.
-#
-# We search for the line starting with the original line number,
-# then we walk it back 20 lines, then with line right after the
-# orginal line number and walk forward 20 lines.
-#
-# NOTE: dbline is expected to be 'local'
-# when called
-#
-sub fix_breakpoints {
-    my (@brkPts) = @_;
-    my ($startLine, $endLine, $nLines);
-    my (@retList);
-
-    $nLines = scalar @dbline;
-
-    for my $brkPt (@brkPts) {
-
-        $startLine = $brkPt->{'line'} > 20           ? $brkPt->{'line'} - 20 : 0;
-        $endLine   = $brkPt->{'line'} < $nLines - 20 ? $brkPt->{'line'} + 20 : $nLines;
-
-        for ((reverse $startLine .. $brkPt->{'line'}), $brkPt->{'line'} + 1 .. $endLine) {
-            next unless $brkPt->{'text'} eq $dbline[$_];
-            $brkPt->{'line'} = $_;
-            push @retList, $brkPt;
-            last;
-        }
-    }
-
-    return @retList;
-
-}
-
-#
-# Restore breakpoints saved above
-#
-sub restore_breakpoints_from_save {
-    my ($brkList) = @_;
-    my ($offset, $key, $list, @newList);
-
-    while (($key, $list) = each %$brkList) {    # reinsert loop
-        next unless exists $main::{$key};
-        local (*dbline) = $main::{$key};
-
-        $offset = 0;
-        $offset = 1 if $dbline[1] =~ /use\s+.*Devel::_?ptkdb/;
-
-        @newList = fix_breakpoints(@$list);
-
-        for my $brkPt (@newList) {
-            if (!&DB::checkdbline($key, $brkPt->{'line'} + $offset)) {
-                print "Breakpoint $key:$brkPt->{'line'} in config file is not breakable.\n";
-                next;
-            }
-            $dbline{ $brkPt->{'line'} } = {%$brkPt};    # make a fresh copy
-        }
-    }
-
-}
-
-use strict;
 
 sub dbint_handler {
     my ($sigName) = @_;
@@ -269,13 +317,6 @@ sub Initialize {
 
     $DB::dbint_handler_save = $SIG{'INT'}         unless $DB::sigint_disable;    # saves the old handler
     $SIG{'INT'}             = "DB::dbint_handler" unless $DB::sigint_disable;
-
-=for obsolete
-
-    # Save the file name we started up with
-    $DB::startupFname = $fName;
-
-=cut
 
     # Check for a 'restart' file
 
@@ -305,163 +346,6 @@ sub save_state_file {
     my $window = Devel::ptkdb::window();
     return $window->save_state_file($fname);
 }
-
-=for obsolete
-
-sub restoreState {
-    my ($fName) = @_;
-    my ($stateFile, $files, $expr_list, $eval_saved_text, $main_win_geometry, $restoreName);
-
-    my $window = Devel::ptkdb::window();
-
-    $stateFile = makeFileSaveName($fName);
-
-    if (-e $stateFile && -r $stateFile) {
-        ($files, $expr_list, $eval_saved_text, $main_win_geometry) = $window->get_state($stateFile);
-        &DB::restore_breakpoints_from_save($files);
-        $window->{'expr_list'}     = $expr_list if defined $expr_list;
-        $window->{eval_saved_text} = $eval_saved_text;
-
-        if ($main_win_geometry) {
-            # restore the height and width of the window
-            $window->{main_window}->geometry($main_win_geometry);
-        }
-    }
-
-}
-
-sub makeFileSaveName {
-    my ($fName) = @_;
-    my $saveName = $fName;
-
-    if ($saveName =~ /.p[lm]$/) {
-        $saveName =~ s/.pl$/.ptkdb/;
-    } else {
-        $saveName .= ".ptkdb";
-    }
-
-    return $saveName;
-}
-
-sub save_state_file {
-    my ($fname) = @_;
-    my ($files, $d, $saveStr);
-    my $window = Devel::ptkdb::window();
-
-    $files = &DB::breakpoints_to_save();
-
-    $d = Data::Dumper->new(
-        [$files,  $window->{'expr_list'}, ""],
-        ["files", "expr_list",            "eval_saved_text"]
-    );
-
-    $d->Purity(1);
-    if (Data::Dumper->can('Dumpxs')) {
-        $saveStr = $d->Dumpxs();
-    } else {
-        $saveStr = $d->Dump();
-    }
-
-    open my $F, '>', $fname || die "Couldn't open file $fname";
-
-    print $F $saveStr || die "Couldn't write file";
-
-    close $F;
-}
-
-sub save_state_callback {
-    my ($name_in) = @_;
-    my ($top,   $entry,   $okayBtn);
-    my ($fname, $saveSub, $cancelSub, $saveName, $eval_saved_text, $d);
-    my ($files, $main_win_geometry);
-    #
-    # Create our default name
-    #
-    my $window = Devel::ptkdb::window();
-
-    #
-    # Extract the height and width of our window
-    #
-    $main_win_geometry = $window->{main_window}->geometry;
-
-    if (defined $window->{save_box}) {
-        $window->{save_box}->raise;
-        $window->{save_box}->focus;
-        return;
-    }
-
-    $saveName = $name_in || makeFileSaveName($DB::startupFname);
-
-    $saveSub = sub {
-        $window->{'event'} = 'null';
-
-        my $saveStr;
-
-        delete $window->{save_box};
-
-        if (exists $window->{eval_window}) {
-            $eval_saved_text = $window->{eval_text}->get('0.0', 'end');
-        } else {
-            $eval_saved_text = $window->{eval_saved_text};
-        }
-
-        $files = &DB::breakpoints_to_save();
-
-        $d = Data::Dumper->new(
-            [$files,  $window->{'expr_list'}, $eval_saved_text,  $main_win_geometry],
-            ["files", "expr_list",            "eval_saved_text", "main_win_geometry"]
-        );
-
-        $d->Purity(1);
-        if (Data::Dumper->can('Dumpxs')) {
-            $saveStr = $d->Dumpxs();
-        } else {
-            $saveStr = $d->Dump();
-        }
-
-        eval {
-            open my $F, '>', $saveName || die "Couldn't open file $saveName";
-
-            print $F $saveStr || die "Couldn't write file";
-
-            close $F;
-        };
-        $window->DoAlert($@) if $@;
-    };
-
-    $cancelSub = sub {
-        delete $window->{'save_box'};
-    };
-
-    #
-    # Create a dialog
-    #
-
-    $window->{'save_box'}
-        = $window->simplePromptBox("Save Config?", $saveName, $saveSub, $cancelSub);
-
-}
-
-sub restore_state_callback {
-    my ($top, $restoreSub);
-
-    my $window = Devel::ptkdb::window();
-
-    $restoreSub = sub {
-        {
-            no warnings 'once';
-            $window->restoreStateFile($Devel::ptkdb::promptString);
-        }
-    };
-
-    $top = $window->simplePromptBox(
-        "Restore Config?",
-        makeFileSaveName($DB::startupFname), $restoreSub
-    );
-
-}
-
-=cut
 
 sub SetStepOverBreakPoint {
     my ($offset) = @_;

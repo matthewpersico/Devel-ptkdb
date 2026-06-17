@@ -31,7 +31,6 @@ use Devel::ptkdb::State;
 our $window;
 our $window_is_being_built = 0;
 
-use vars qw(@dbline);    # Again, this breaks code if changed to "our".
 my $isWin32 = $^O eq 'MSWin32';
 our $VERSION = "2.0.0";
 
@@ -314,20 +313,18 @@ sub DoBugReport {
 # Subroutine provided to the user for initializing files in '.ptkdbrc'
 #
 sub brkpt {
-    my ($fName, @idx) = @_;
-    my ($offset);
-    local (*dbline) = $main::{ '_<' . $fName };
+    my ($fname, @idx) = @_;
+
+    my $offset = DB::dbline_offset($fname);
     my $window = Devel::ptkdb::window();
 
-    $offset = $dbline[1] =~ /use\s+.*Devel::_?ptkdb/ ? 1 : 0;
-
     for (@idx) {
-        if (!&DB::checkdbline($fName, $_ + $offset)) {
+        if (!&DB::checkdbline($fname, $_ + $offset)) {
             my ($package, $filename, $line) = caller;
-            print "$filename:$line:  $fName line $_ is not breakable\n";
+            print "$filename:$line:  $fname line $_ is not breakable\n";
             next;
         }
-        $window->insertBreakpoint($fName, $_, 1);    # insert a simple breakpoint
+        $window->insertBreakpoint($fname, $_, 1);    # insert a simple breakpoint
     }
 }
 
@@ -336,11 +333,8 @@ sub brkpt {
 #
 sub condbrkpt {
     my ($fname) = shift;
-    my ($offset);
-    local (*dbline) = $main::{ '_<' . $fname };
-    my $window = Devel::ptkdb::window();
-
-    $offset = $dbline[1] =~ /use\s+.*Devel::_?ptkdb/ ? 1 : 0;
+    my $offset  = DB::dbline_offset($fname);
+    my $window  = Devel::ptkdb::window();
 
     while (@_) {    # arg loop
         my ($index, $expr) = splice @_, 0, 2;    # take args 2 at a time
@@ -1783,11 +1777,7 @@ sub insertBreakpoint {
     my ($self, $fname, @brks) = @_;
     my ($btn, $cnt, $item);
 
-    my ($offset);
-
-    local (*dbline) = $main::{ '_<' . $fname };
-
-    $offset = $dbline[1] =~ /use\s+.*Devel::_?ptkdb/ ? 1 : 0;
+    my $offset = DB::dbline_offset($fname);
 
     while (@brks) {
         my ($index, $value, $expression) = splice @brks, 0, 3;    # take args 3 at a time
@@ -1905,10 +1895,8 @@ sub remove_brkpt_from_brkpt_page {
 #
 sub insertTempBreakpoint {
     my ($self, $fname, $index) = @_;
-    my ($offset);
-    local (*dbline) = $main::{ '_<' . $fname };
 
-    $offset = $dbline[1] =~ /use\s+.*Devel::_?ptkdb/ ? 1 : 0;
+    my $offset = DB::dbline_offset($fname);
 
     return if (&DB::getdbline($fname, $index + $offset));    # we already have a breakpoint here
 
@@ -1963,10 +1951,8 @@ sub removeBreakpointTags {
 sub removeBreakpoint {
     my ($self, $fname, @idx) = @_;
     my ($chkIdx, $i, $j, $info);
-    my ($offset);
-    local (*dbline) = $main::{ '_<' . $fname };
 
-    $offset = $dbline[1] =~ /use\s+.*Devel::_?ptkdb/ ? 1 : 0;
+    my $offset = DB::dbline_offset($fname);
 
     for my $idx (@idx) {
         next unless defined $idx;
@@ -2257,20 +2243,15 @@ sub set_line {
 # $brkPts any breakpoints that may have been set in this file
 #
 sub set_file {
-    my ($self,    $fname,  $line) = @_;
-    my ($lineStr, $offset, $text, $i, @text, $noCode, $title);
+    my ($self,    $fname, $line) = @_;
+    my ($lineStr, $text,  $i, @text, $noCode, $title);
     my (@breakableTagList, @nonBreakableTagList);
 
-    return unless $fname;    # we're getting an undef here on 'Restart...'
-    local (*dbline) = $main::{ '_<' . $fname };
+    my $lines = DB::dbline_lines($fname);
+    return unless $lines;
 
-    #
-    # with the #! /usr/bin/perl -d:ptkdb at the header of the file
-    # we've found that with various combinations of other options the
-    # files haven't come in at the right offsets
-    #
-    $offset                = 0;
-    $offset                = 1 if $dbline[1] =~ /use\s+.*Devel::_?ptkdb/;
+    my $offset = DB::dbline_offset($fname);
+
     $self->{'line_offset'} = $offset;
 
     $text = $self->{'text'};
@@ -2300,40 +2281,37 @@ sub set_file {
     # is the result of an intensive effort to optimize this code.  Prior
     # versions of this code were quite easier to read, but took 3 times longer.
 
-    $lineStr = " " x 200;                        # pre-allocate space for $lineStr
+    $lineStr = " " x 200;                          # pre-allocate space for $lineStr
     $i       = 1;
-    $noCode  = ($#dbline - ($offset + 1)) < 0;
+    $noCode  = ($#{$lines} - ($offset + 1)) < 0;
 
     # The 'map' call will build list of 'string', 'tag' pairs that will become
     # arguments to the 'insert' call.  Passing the text to insert "all at once"
     # rather than one insert->('end', 'string', 'tag') call at time provides a
     # MASSIVE savings in execution time.
-    {
-        no warnings 'uninitialized';    # spares us useless warnings checking $dbline[$_] != 0
-        $text->insert(
-            'end',
-            map {
-                #
-                # build collections of tags representing
-                # the line numbers for breakable and
-                # non-breakable lines.  We apply these
-                # tags after we've built the text
-                #
+    $text->insert(
+        'end',
+        map {
+            #
+            # build collections of tags representing
+            # the line numbers for breakable and
+            # non-breakable lines.  We apply these
+            # tags after we've built the text
+            #
 
-                ($_ != 0 && push @breakableTagList, "$i.0", "$i.$len") || push @nonBreakableTagList,
-                    "$i.0", "$i.$len";
+            ($_ != 0 && push @breakableTagList, "$i.0", "$i.$len") || push @nonBreakableTagList,
+                "$i.0", "$i.$len";
 
-                $lineStr = sprintf($Devel::ptkdb::linenumber_format, $i++) . $_;    # line number + text of the line
+            $lineStr = sprintf($Devel::ptkdb::linenumber_format, $i++) . $_;    # line number + text of the line
 
-                substr $lineStr, -2, 1, '' if $isWin32;                             # removes the CR from win32 instances
+            substr $lineStr, -2, 1, '' if $isWin32;                             # removes the CR from win32 instances
 
-                $lineStr .= "\n" unless /\n$/o;                                     # append a \n if there isn't one already
+            $lineStr .= "\n" unless /\n$/o;                                     # append a \n if there isn't one already
 
-                ($lineStr, 'code');                                                 # return value for block, a string,tag pair for text insert
+            ($lineStr, 'code');                                                 # return value for block, a string,tag pair for text insert
 
-            } @dbline[$offset + 1 .. $#dbline]
-        ) unless $noCode;
-    }
+        } @{$lines}[$offset + 1 .. $#{$lines}]
+    ) unless $noCode;
 
     # Apply the tags that we've collected NOTE: it was attempted to incorporate
     # these operations into the 'map' block above, but that actually degraded
@@ -2817,16 +2795,19 @@ sub setupEvalWindow {
 
 sub filterBreakPts {
     my ($breakPtsListRef, $fname) = @_;
-    my $dbline = $main::{ '_<' . $fname };    # breakable lines
-                                              #
-                                              # Go through the list of breaks and take out any that
-                                              # are no longer breakable
-                                              #
 
+    my $lines = DB::dbline_lines($fname);
+    return unless $lines;
+
+    #
+    # Go through the list of breaks and take out any that
+    # are no longer breakable
+    #
     for (@$breakPtsListRef) {
         next unless defined $_;
 
-        next if $dbline->[$_->{'line'}] != 0;    # still breakable
+        my $line = $_->{line};
+        next if defined $lines->[$line] && $lines->[$line] ne '0';    # still breakable
 
         $_ = undef;
     }
@@ -2961,11 +2942,9 @@ sub retrieve_text_expr {
 
     $col -= $offset;
 
-    local (*dbline) = $main::{ '_<' . $self->{current_file} };
+    $data = DB::getdbtextline($self->{current_file}, $idx);
 
-    return if (!defined $dbline[$idx] || $dbline[$idx] == 0);    # no executable text, no real variable(?)
-
-    $data = $dbline[$idx];
+    return if (!defined $data || $data eq '0');        # no executable text, no real variable(?)
 
     # if we're sitting over white space, leave
     my $len = length $data;

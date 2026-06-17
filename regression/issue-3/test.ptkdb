@@ -1,33 +1,8 @@
 $ptkdb_state = {
-                 'eval_saved_text' => undef,
-                 'main_win_geometry' => '800x600+1520+775',
-                 'files' => {
-                              '_<regression/issue-3/test.pl' => [
-                                                                  {
-                                                                    'fname' => 'regression/issue-3/test.pl',
-                                                                    'text' => 'my $h     = { 43, 23 };
-',
-                                                                    'expr' => undef,
-                                                                    'type' => 'user',
-                                                                    'line' => '9',
-                                                                    'value' => '1'
-                                                                  },
-                                                                  {
-                                                                    'expr' => undef,
-                                                                    'fname' => 'regression/issue-3/test.pl',
-                                                                    'value' => '1',
-                                                                    'line' => 11,
-                                                                    'text' => 'my %h     = (
-',
-                                                                    'type' => 'user'
-                                                                  }
-                                                                ]
-                            },
-                 'version' => '2.0.0',
                  'expr_list' => [
                                   {
-                                    'expr' => '%h',
-                                    'depth' => -1
+                                    'depth' => -1,
+                                    'expr' => '%h'
                                   },
                                   {
                                     'expr' => '$dummy',
@@ -37,7 +12,32 @@ $ptkdb_state = {
                                     'expr' => '$h',
                                     'depth' => -1
                                   }
-                                ]
+                                ],
+                 'version' => '2.0.0',
+                 'main_win_geometry' => '800x600+1520+775',
+                 'eval_saved_text' => undef,
+                 'files' => {
+                              'regression/issue-3/test.pl' => [
+                                                                {
+                                                                  'line' => 11,
+                                                                  'expr' => undef,
+                                                                  'type' => 'user',
+                                                                  'fname' => 'regression/issue-3/test.pl',
+                                                                  'value' => '1',
+                                                                  'text' => 'my %h     = (
+'
+                                                                },
+                                                                {
+                                                                  'line' => 9,
+                                                                  'value' => '1',
+                                                                  'text' => 'my $h     = { 43, 23 };
+',
+                                                                  'expr' => undef,
+                                                                  'type' => 'user',
+                                                                  'fname' => 'regression/issue-3/test.pl'
+                                                                }
+                                                              ]
+                            }
                };
 
 $ptkdb_state;

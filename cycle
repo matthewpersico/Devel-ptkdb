@@ -1,0 +1,13 @@
+# -*- sh -*-
+# shellcheck shell=bash
+if [[ $1 =~ -t ]]; then
+    /home/matthew/personal/bin/perltidy-bulk --update --all || exit
+fi
+
+if [[ ! $1 =~ -jr ]]; then
+    { perl Makefile.PL \
+        && make test; } || exit
+fi
+
+logit  --gui --log refactor -- \
+       perl -Iblib/lib -Iblib/arch -Mblib -d:ptkdb regression/issue-3/test.pl
