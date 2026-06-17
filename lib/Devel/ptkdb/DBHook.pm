@@ -7,13 +7,25 @@ use vars qw(@dbline %dbline );
 
 use Carp;
 
+sub breakpoint_state {
+    return DB::breakpoints_to_save();
+}
+
+sub restore_breakpoint_state {
+    my ($files) = @_;
+    return unless $files;
+    DB::restore_breakpoints_from_save($files);
+}
+
+# =========================================================================
+# Below here is code that existed prior to the re-architecting of
+# 2026/June. Any function that can be used will be hoisted up above.
+
 # Here's the clue...
 # eval only seems to eval the context of
 # the executing script while in the DB
 # package.  When we had updateExprs in the Devel::ptkdb
 # package eval would turn up an undef result.
-#
-
 sub updateExprs {
     my ($package) = @_;
     my $window = Devel::ptkdb::window();
@@ -258,28 +270,43 @@ sub Initialize {
     $DB::dbint_handler_save = $SIG{'INT'}         unless $DB::sigint_disable;    # saves the old handler
     $SIG{'INT'}             = "DB::dbint_handler" unless $DB::sigint_disable;
 
+=for obsolete
+
     # Save the file name we started up with
     $DB::startupFname = $fName;
 
+=cut
+
     # Check for a 'restart' file
 
-    if (   $ENV{'PTKDB_RESTART_STATE_FILE'}
-        && $Devel::ptkdb::DataDumperAvailable
+    if ($ENV{'PTKDB_RESTART_STATE_FILE'}
         && -e $ENV{'PTKDB_RESTART_STATE_FILE'}) {
         #
         # Restore expressions and breakpoints in state file
         #
-        $window->restoreStateFile($ENV{'PTKDB_RESTART_STATE_FILE'});
+        print "restoring state from $ENV{'PTKDB_RESTART_STATE_FILE'}\n";
+        $window->restore_state_file($ENV{'PTKDB_RESTART_STATE_FILE'});
         unlink $ENV{'PTKDB_RESTART_STATE_FILE'};    # delete state file
-
-        # print "restoring state from $ENV{'PTKDB_RESTART_STATE_FILE'}\n" ;
-
         $ENV{'PTKDB_RESTART_STATE_FILE'} = "";      # clear entry
     } else {
-        &DB::restoreState($fName) if $Devel::ptkdb::DataDumperAvailable;
+        $window->restore_state_file();              # look for a default based on $0
     }
 
 }
+
+sub restoreState {
+    my ($fname) = @_;
+    my $window = Devel::ptkdb::window();
+    return $window->restore_state_file($fname);
+}
+
+sub save_state_file {
+    my ($fname) = @_;
+    my $window = Devel::ptkdb::window();
+    return $window->save_state_file($fname);
+}
+
+=for obsolete
 
 sub restoreState {
     my ($fName) = @_;
@@ -433,6 +460,8 @@ sub restore_state_callback {
     );
 
 }
+
+=cut
 
 sub SetStepOverBreakPoint {
     my ($offset) = @_;

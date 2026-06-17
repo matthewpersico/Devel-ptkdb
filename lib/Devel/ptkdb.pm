@@ -6,7 +6,7 @@ use warnings;
 #
 # CPAN modules
 #
-use Carp qw(cluck carp);
+use Carp qw(cluck carp confess);
 use Config;
 use Cwd qw(realpath);
 use Data::Dumper;
@@ -18,6 +18,11 @@ use Tk::ROText;
 use Tk::NoteBook;
 use Tk::HList;
 use Tk::Table;
+
+#
+# Package modules
+#
+use Devel::ptkdb::State;
 
 #
 # Data
@@ -45,35 +50,132 @@ sub console_say {
     print(qq(\n), console_prompt(@_));
 }
 
+sub console_string {
+    return (qq(\n) . console_prompt(@_));
+}
+
 sub debug_say {
-    my @msg = @_;
-    console_say(@msg);
-    {
-        local $Carp::Verbose = 1;
-        carp();
+    my %args = (
+        msg    => '',
+        action => 'continue',
+        @_
+    );
+    my $output = console_string($args{msg});
+
+    for ($args{action}) {
+        /continue/ && do {
+            print $output;
+            next;
+        };
+        /dietrace/ && do {
+            confess $output;
+            next;
+        };
+        /warntrace/ && do {
+            cluck $output;
+            next;
+        };
+        /die/ && do {
+            croak $output;
+            next;
+        };
+        /warn/ && do {
+            carp $output;
+            next;
+        };
+        otherwise:
+        confess "action '$args{action}' not one of warn, warntrace, die, dietrace";
     }
 }
 
 sub debug_dump {
-    my @dumps = @_;
-    my @msg;
+    my %args = (
+        msg    => '',
+        action => 'continue',
+        dump   => [],
+        @_
+    );
+    my @output;
     {
         no strict 'refs';    ## no critic (TestingAndDebugging::ProhibitNoStrict)
-        for my $dump (@dumps) {
+        for my $dump (@{ $args{dump} }) {
             $dump->{desc} = (
                   $dump->{desc}
                 ? $dump->{desc} . ': '
                 : q()
             );
-            push @msg, $dump->{desc} . Data::Dumper->Dump([$dump->{ref}], ['*' . $dump->{name}]),
+            push @output, $dump->{desc} . Data::Dumper->Dump([$dump->{ref}], ['*' . $dump->{name}]),
                 "\n";
         }
     }
-    console_say(@msg);
-    {
-        local $Carp::Verbose = 1;
-        carp();
-    }
+    debug_say(
+        msg    => $args{msg} . qq(\n) . join('', @output),
+        action => $args{action},
+    );
+}
+
+#
+# Constructor for our Devel::ptkdb
+#
+sub new {
+    my ($type) = @_;
+    my ($self) = {};
+
+    bless $self, $type;
+
+    # Handles .ptkdb file saves and loads.
+    $self->{state_manager} = Devel::ptkdb::State->new(debugger => $self,);
+
+    # ===================================================================
+    # Below here is code that existed in this function prior to the
+    # re-architecting of 2026/June. Any function that can be used will be
+    # hoisted up above.
+
+    $self->{DisableOnLeave} = [];    # List o' Widgets to disable when leaving the debugger
+
+    $self->{current_file}      = "";
+    $self->{current_line}      = -1;      # initial value indicating we haven't set our line/tag
+    $self->{window_pos_offset} = 10;      # when we enter how far from the top of the text are we positioned down
+    $self->{search_start}      = "0.0";
+    $self->{fwdOrBack}         = 1;
+    $self->{BookMarksPath}
+        = $ENV{'PTKDB_BOOKMARKS_PATH'} || "$ENV{'HOME'}/.ptkdb_bookmarks" || '.ptkdb_bookmarks';
+
+    $self->{'expr_list'} = [];            # list of expressions to eval in our window fields:  {'expr'} The expr itself {'depth'} expansion depth
+
+    $self->{'brkPtCnt'}   = 0;
+    $self->{'brkPtSlots'} = [];           # open slots for adding breakpoints to the table
+
+    $self->{'user_window_init_list'}     = [];
+    $self->{'user_window_DB_entry_list'} = [];
+
+    $self->{'subs_list_cnt'} = 0;
+
+    $self->setup_main_window();
+
+    return $self;
+
+}
+
+sub make_file_save_name {
+    my ($self, $filename) = @_;
+
+    $filename =~ s/\.(?:pl|pm|t)\z//;
+    return "$filename.ptkdb";
+}
+
+sub has_window {
+    return defined $window;
+}
+
+sub restore_state_file {
+    my ($self, @args) = @_;
+    return $self->{state_manager}->restore_state_file(@args);
+}
+
+sub save_state_file {
+    my ($self, @args) = @_;
+    return $self->{state_manager}->save_state_file(@args);
 }
 
 sub window {
@@ -87,9 +189,9 @@ sub window {
     return $window;
 }
 
-sub has_window {
-    return defined $window;
-}
+# =========================================================================
+# Below here is code that existed prior to the re-architecting of
+# 2026/June. Any function that can be used will be hoisted up above.
 
 sub BEGIN {
     console_say(q(Devel::ptkdb BEGIN...)) if (not $^C);
@@ -112,9 +214,6 @@ sub BEGIN {
     #
     $Devel::ptkdb::pathSep            = '\x00';
     $Devel::ptkdb::pathSepReplacement = "\0x01";
-    @Devel::ptkdb::step_in_keys       = ('<Shift-F9>', '<Alt-s>', '<Button-3>');          # step into a subroutine
-    @Devel::ptkdb::step_over_keys     = ('<F9>',       '<Alt-n>', '<Shift-Button-3>');    # step over a subroutine
-    @Devel::ptkdb::return_keys        = ('<Alt-u>',    '<Control-Button-3>');             # return from a subroutine
 
     # ALT-B brings up a menu
     # @Devel::ptkdb::toggle_breakpt_keys = ('<Alt-b>'); # set or unset a breakpoint
@@ -384,45 +483,6 @@ sub do_user_init_files {
     &set_stop_on_warning();
 }
 
-#
-# Constructor for our Devel::ptkdb
-#
-sub new {
-    my ($type) = @_;
-    my ($self) = {};
-
-    bless $self, $type;
-
-    # Current position of the executing program
-
-    $self->{DisableOnLeave} = [];    # List o' Widgets to disable when leaving the debugger
-
-    $self->{current_file}      = "";
-    $self->{current_line}      = -1;      # initial value indicating we haven't set our line/tag
-    $self->{window_pos_offset} = 10;      # when we enter how far from the top of the text are we positioned down
-    $self->{search_start}      = "0.0";
-    $self->{fwdOrBack}         = 1;
-    $self->{BookMarksPath}
-        = $ENV{'PTKDB_BOOKMARKS_PATH'} || "$ENV{'HOME'}/.ptkdb_bookmarks" || '.ptkdb_bookmarks';
-
-    $self->{'expr_list'} = [];            # list of expressions to eval in our window fields:  {'expr'} The expr itself {'depth'} expansion depth
-
-    $self->{'brkPtCnt'}   = 0;
-    $self->{'brkPtSlots'} = [];           # open slots for adding breakpoints to the table
-
-    $self->{'main_window'} = undef;
-
-    $self->{'user_window_init_list'}     = [];
-    $self->{'user_window_DB_entry_list'} = [];
-
-    $self->{'subs_list_cnt'} = 0;
-
-    $self->setup_main_window();
-
-    return $self;
-
-}
-
 sub setup_main_window {
     my ($self) = @_;
 
@@ -443,6 +503,10 @@ sub setup_main_window {
     # Menu bar
 
     $self->setup_menu_bar();
+
+    # Button bar
+
+    $self->setup_button_bar();
 
     #
     # setup Frames
@@ -574,26 +638,17 @@ sub close_ptkdb_window {
     $self->{'main_window'} = undef;
 }
 
-sub setup_menu_bar {
+sub setup_menu_bar_item_file {
     my ($self) = @_;
+
     my $mw = $self->{main_window};
-    my ($mb, $items);
+    $mw->bind('<Alt-g>'     => sub { $self->GotoLine(); });
+    $mw->bind('<Control-f>' => sub { $self->FindText(); });
+    $mw->bind('<Control-r>' => \&Devel::ptkdb::DoRestart);
+    $mw->bind('<Alt-q>'     => sub { $self->{'event'} = 'quit' });
+    $mw->bind('<Alt-w>'     => sub { $self->close_ptkdb_window; });
 
-    #
-    # We have menu items/features that are not available if the Data::DataDumper module
-    # isn't present.  For any feature that requires it we add this option list.
-    #
-    my @dataDumperEnableOpt;
-    @dataDumperEnableOpt = (state => 'disabled') unless $Devel::ptkdb::DataDumperAvailable;
-
-    $self->{menu_bar}
-        = $mw->Frame(-relief => 'raised', -borderwidth => '1')->pack(-side => 'top', -fill => 'x');
-
-    $mb = $self->{menu_bar};
-
-    # file menu in menu bar
-
-    $items = [
+    my $items = [
         ['command' => 'About...',      -command => sub { $self->DoAbout(); }],
         ['command' => 'Bug Report...', -command => \&DoBugReport],
         "-",
@@ -606,21 +661,18 @@ sub setup_menu_bar {
 
         [   'command'  => 'Save Config...',
             -underline => 0,
-            -command   => \&DB::save_state_callback,
-            @dataDumperEnableOpt
+            -command   => sub { $self->{state_manager}->save_state_callback() },
         ],
 
         [   'command'  => 'Restore Config...',
             -underline => 0,
-            -command   => \&DB::restore_state_callback,
-            @dataDumperEnableOpt
+            -command   => sub { $self->{state_manager}->restore_state_callback() },
         ],
 
         [   'command'    => 'Goto Line...',
             -underline   => 0,
             -accelerator => 'Alt-g',
             -command     => sub { $self->GotoLine(); },
-            @dataDumperEnableOpt
         ],
 
         [   'command'    => 'Find Text...',
@@ -646,54 +698,73 @@ sub setup_menu_bar {
         ]
     ];
 
-    $mw->bind('<Alt-g>'     => sub { $self->GotoLine(); });
-    $mw->bind('<Control-f>' => sub { $self->FindText(); });
-    $mw->bind('<Control-r>' => \&Devel::ptkdb::DoRestart);
-    $mw->bind('<Alt-q>'     => sub { $self->{'event'} = 'quit' });
-    $mw->bind('<Alt-w>'     => sub { $self->close_ptkdb_window; });
+    return $items;
+}
 
-    $self->{file_menu_button} = $mb->Menubutton(
-        -text      => 'File',
-        -underline => 0,
-        -menuitems => $items
-    )->pack(
-        -side =>,
-        'left',
-        -anchor => 'nw',
-        -padx   => 2
-    );
+sub setup_menu_bar_item_control {
+    my ($self) = @_;
 
-    # Control Menu
+    my $mw = $self->{main_window};
 
-    my $runSub   = sub { $DB::step_over_depth = -1; $self->{'event'} = 'run' };
-    my $window   = Devel::ptkdb::window();
-    my $runToSub = sub {
-        $self->{'event'} = 'run' if $window->SetBreakPoint(1);
+    $self->{shared_callbacks} = {
+        runSub => sub { $DB::step_over_depth = -1; $self->{'event'} = 'run' },
+
+        runToSub => sub {
+            $self->{'event'} = 'run' if $self->SetBreakPoint(1);
+        },
+
+        stepOverSub => sub {
+            &DB::SetStepOverBreakPoint(0);
+            $DB::single = 1;
+            $self->{'event'} = 'step';
+        },
+
+        stepInSub => sub {
+            $DB::step_over_depth = -1;
+            $DB::single          = 1;
+            $self->{'event'}     = 'step';
+        },
+
+        returnSub => sub {
+            &DB::SetStepOverBreakPoint(-1);
+            $self->{'event'} = 'run';
+        },
     };
 
-    my $stepOverSub = sub {
-        &DB::SetStepOverBreakPoint(0);
-        $DB::single = 1;
-        $self->{'event'} = 'step';
+    my $clearAllBkptsSub = sub {
+        $self->removeAllBreakpoints($self->{current_file});
+        DB::clearalldblines();
     };
 
-    my $stepInSub = sub {
-        $DB::step_over_depth = -1;
-        $DB::single          = 1;
-        $self->{'event'}     = 'step';
-    };
+    $mw->bind('<Alt-r>'     => $self->{shared_callbacks}->{runSub});
+    $mw->bind('<Alt-t>'     => $self->{shared_callbacks}->{runToSub});
+    $mw->bind('<Control-b>' => sub { $self->SetBreakPoint; });
 
-    my $returnSub = sub {
-        &DB::SetStepOverBreakPoint(-1);
-        $self->{'event'} = 'run';
-    };
+    # step over a subroutine
+    for ('<F9>', '<Alt-n>', '<Shift-Button-3>') {
+        $mw->bind($_ => $self->{shared_callbacks}->{stepOverSub});
+    }
 
-    $items = [
-        ['command' => 'Run', -accelerator => 'Alt+r', -underline => 0, -command => $runSub],
+    # step into a subroutine
+    for ('<Shift-F9>', '<Alt-s>', '<Button-3>') {
+        $mw->bind($_ => $self->{shared_callbacks}->{stepInSub});
+    }
+
+    # return from a subroutine
+    for ('<Alt-u>', '<Control-Button-3>') {
+        $mw->bind($_ => $self->{shared_callbacks}->{returnSub});
+    }
+
+    my $items = [
+        [   'command'    => 'Run',
+            -accelerator => 'Alt+r',
+            -underline   => 0,
+            -command     => $self->{shared_callbacks}->{runSub}
+        ],
         [   'command'    => 'Run To Here',
             -accelerator => 'Alt+t',
             -underline   => 5,
-            -command     => $runToSub
+            -command     => $self->{shared_callbacks}->{runToSub}
         ],
         '-',
         [   'command'    => 'Set Breakpoint',
@@ -701,26 +772,29 @@ sub setup_menu_bar {
             -command     => sub { $self->SetBreakPoint; },
             -accelerator => 'Ctrl-b'
         ],
-        ['command' => 'Clear Breakpoint', -command => sub { $self->UnsetBreakPoint }],
+        [   'command' => 'Clear Breakpoint',
+            -command  => sub { $self->UnsetBreakPoint }
+        ],
         [   'command'  => 'Clear All Breakpoints',
             -underline => 6,
-            -command   => sub {
-                $self->removeAllBreakpoints($window->{current_file});
-                DB::clearalldblines();
-            }
+            -command   => $clearAllBkptsSub
         ],
         '-',
         [   'command'    => 'Step Over',
             -accelerator => 'Alt+N',
             -underline   => 0,
-            -command     => $stepOverSub
+            -command     => $self->{shared_callbacks}->{stepOverSub}
         ],
         [   'command'    => 'Step In',
             -accelerator => 'Alt+S',
             -underline   => 5,
-            -command     => $stepInSub
+            -command     => $self->{shared_callbacks}->{stepInSub}
         ],
-        ['command' => 'Return', -accelerator => 'Alt+U', -underline => 3, -command => $returnSub],
+        [   'command'    => 'Return',
+            -accelerator => 'Alt+U',
+            -underline   => 3,
+            -command     => $self->{shared_callbacks}->{returnSub}
+        ],
         '-',
         [   'command'    => 'Restart...',
             -accelerator => 'Ctrl-r',
@@ -734,36 +808,18 @@ sub setup_menu_bar {
         ]
 
     ];
+    return $items;
+}
 
-    $self->{control_menu_button} = $mb->Menubutton(
-        -text      => 'Control',
-        -underline => 0,
-        -menuitems => $items,
-    )->pack(
-        -side =>,
-        'left',
-        -padx => 2
-    );
+sub setup_menu_bar_item_data {
+    my ($self) = @_;
 
-    $mw->bind('<Alt-r>' => $runSub);
-    $mw->bind('<Alt-t>',     $runToSub);
-    $mw->bind('<Control-b>', sub { $self->SetBreakPoint; });
+    my $mw = $self->{main_window};
+    $mw->bind('<Alt-e>'     => sub { $self->EnterExpr() });
+    $mw->bind('<Control-d>' => sub { $self->deleteExpr() });
+    $mw->bind('<F8>', sub { $self->setupEvalWindow(); });
 
-    for (@Devel::ptkdb::step_over_keys) {
-        $mw->bind($_ => $stepOverSub);
-    }
-
-    for (@Devel::ptkdb::step_in_keys) {
-        $mw->bind($_ => $stepInSub);
-    }
-
-    for (@Devel::ptkdb::return_keys) {
-        $mw->bind($_ => $returnSub);
-    }
-
-    # Data Menu
-
-    $items = [
+    my $items = [
         [   'command'    => 'Enter Expression',
             -accelerator => 'Alt+E',
             -command     => sub { $self->EnterExpr() }
@@ -785,25 +841,110 @@ sub setup_menu_bar {
         ],
         [   'checkbutton' => "Use DataDumper for Eval Window?",
             -variable     => \$Devel::ptkdb::useDataDumperForEval,
-            @dataDumperEnableOpt
         ]
     ];
+    return $items;
+}
 
+sub setup_menu_bar_item_bookmarks {
+    my ($self) = @_;
+
+    #
+    # "Add bookmark" item
+    #
+    my $bkMarkSub = sub { $self->add_bookmark(); };
+
+    $self->{'bookmarks_menu'}->command(
+        -label       => "Add Bookmark",
+        -accelerator => 'Alt+k',
+        -command     => $bkMarkSub
+    );
+
+    $self->{'main_window'}->bind('<Alt-k>', $bkMarkSub);
+
+    $self->{'bookmarks_menu'}->command(
+        -label   => "Edit Bookmarks",
+        -command => sub { $self->edit_bookmarks() }
+    );
+
+    $self->{'bookmarks_menu'}->separator();
+
+    #
+    # Check to see if there is a bookmarks file
+    #
+    return unless -e $self->{BookMarksPath} && -r $self->{BookMarksPath};
+
+    use vars qw($ptkdb_bookmarks);
+    local ($ptkdb_bookmarks);    # ref to hash of bookmark entries
+
+    do $self->{BookMarksPath};   # eval the file
+
+    $self->add_bookmark_items(@$ptkdb_bookmarks);
+
+}
+
+sub setup_menu_bar_item_windows {
+    my ($self) = @_;
+    my ($bsub) = sub { $self->{'text'}->focus() };
+    my ($csub) = sub { $self->{'quick_entry'}->focus() };
+    my ($dsub) = sub { $self->{'entry'}->focus() };
+
+    my $mw = $self->{main_window};
+    $mw->bind('<Alt-0>', $bsub);
+    $mw->bind('<F9>',    $csub);
+    $mw->bind('<F11>',   $dsub);
+
+    my $items = [
+        ['command' => 'Code Pane',   -accelerator => 'Alt+0', -command => $bsub],
+        ['command' => 'Quick Entry', -accelerator => 'F9',    -command => $csub],
+        ['command' => 'Expr Entry',  -accelerator => 'F11',   -command => $dsub]
+    ];
+    return $items;
+}
+
+sub setup_menu_bar {
+    my ($self) = @_;
+    my $mw = $self->{main_window};
+
+    $self->{menu_bar}
+        = $mw->Frame(-relief => 'raised', -borderwidth => '1')->pack(-side => 'top', -fill => 'x');
+
+    my $mb = $self->{menu_bar};
+
+    # File menu
+    $self->{file_menu_button} = $mb->Menubutton(
+        -text      => 'File',
+        -underline => 0,
+        -menuitems => $self->setup_menu_bar_item_file()
+    )->pack(
+        -side =>,
+        'left',
+        -anchor => 'nw',
+        -padx   => 2
+    );
+
+    # Control menu
+    $self->{control_menu_button} = $mb->Menubutton(
+        -text      => 'Control',
+        -underline => 0,
+        -menuitems => $self->setup_menu_bar_item_control()
+    )->pack(
+        -side =>,
+        'left',
+        -padx => 2
+    );
+
+    # Data Menu
     $self->{data_menu_button} = $mb->Menubutton(
         -text      => 'Data',
-        -menuitems => $items,
+        -menuitems => $self->setup_menu_bar_item_data(),
         -underline => 0,
     )->pack(
         -side => 'left',
         -padx => 2
     );
 
-    $mw->bind('<Alt-e>'     => sub { $self->EnterExpr() });
-    $mw->bind('<Control-d>' => sub { $self->deleteExpr() });
-    $mw->bind('<F8>', sub { $self->setupEvalWindow(); });
-    #
-    # Stack menu
-    #
+    # Stack menu - list of all current stack frames. Generated on the fly.
     $self->{stack_menu} = $mb->Menubutton(
         -text      => 'Stack',
         -underline => 2,
@@ -818,62 +959,51 @@ sub setup_menu_bar {
     $self->{bookmarks_menu} = $mb->Menubutton(
         -text      => 'Bookmarks',
         -underline => 0,
-        @dataDumperEnableOpt
     )->pack(
         -side => 'left',
         -padx => 2
     );
-    $self->setup_bookmarks_menu();
+    $self->setup_menu_bar_item_bookmarks();
 
     #
     # Windows Menu
     #
-    my ($bsub) = sub { $self->{'text'}->focus() };
-    my ($csub) = sub { $self->{'quick_entry'}->focus() };
-    my ($dsub) = sub { $self->{'entry'}->focus() };
-
-    $items = [
-        ['command' => 'Code Pane',   -accelerator => 'Alt+0', -command => $bsub],
-        ['command' => 'Quick Entry', -accelerator => 'F9',    -command => $csub],
-        ['command' => 'Expr Entry',  -accelerator => 'F11',   -command => $dsub]
-    ];
-
     $mb->Menubutton(
         -text      => 'Windows',
-        -menuitems => $items
+        -menuitems => $self->setup_menu_bar_item_windows
     )->pack(
         -side => 'left',
         -padx => 2
     );
+}
 
-    $mw->bind('<Alt-0>', $bsub);
-    $mw->bind('<F9>',    $csub);
-    $mw->bind('<F11>',   $dsub);
+sub setup_button_bar {
+    my ($self) = @_;
+    my $mw = $self->{main_window};
 
     #
     # Bar for some popular controls
     #
-
     $self->{button_bar} = $mw->Frame()->pack(-side => 'top');
 
     $self->{stepin_button} = $self->{button_bar}->Button(
         -text, => "Step In",
         @Devel::ptkdb::button_font,
-        -command => $stepInSub
+        -command => $self->{shared_callbacks}->{stepInSub}
     );
     $self->{stepin_button}->pack(-side => 'left');
 
     $self->{stepover_button} = $self->{button_bar}->Button(
         -text, => "Step Over",
         @Devel::ptkdb::button_font,
-        -command => $stepOverSub
+        -command => $self->{shared_callbacks}->{stepOverSub}
     );
     $self->{stepover_button}->pack(-side => 'left');
 
     $self->{return_button} = $self->{button_bar}->Button(
         -text, => "Return",
         @Devel::ptkdb::button_font,
-        -command => $returnSub
+        -command => $self->{shared_callbacks}->{returnSub}
     );
     $self->{return_button}->pack(-side => 'left');
 
@@ -881,14 +1011,14 @@ sub setup_menu_bar {
         -background => 'green',
         -text,      => "Run",
         @Devel::ptkdb::button_font,
-        -command => $runSub
+        -command => $self->{shared_callbacks}->{runSub}
     );
     $self->{run_button}->pack(-side => 'left');
 
     $self->{run_to_button} = $self->{button_bar}->Button(
         -text, => "Run To",
         @Devel::ptkdb::button_font,
-        -command => $runToSub
+        -command => $self->{shared_callbacks}->{runToSub}
     );
     $self->{run_to_button}->pack(-side => 'left');
 
@@ -936,43 +1066,6 @@ sub edit_bookmarks {
         ->pack(-side => 'left', -fill => 'x', -expand => 1);
 
     $list->insert('end', @{ $self->{'bookmarks'} });
-
-}
-
-sub setup_bookmarks_menu {
-    my ($self) = @_;
-
-    #
-    # "Add bookmark" item
-    #
-    my $bkMarkSub = sub { $self->add_bookmark(); };
-
-    $self->{'bookmarks_menu'}->command(
-        -label       => "Add Bookmark",
-        -accelerator => 'Alt+k',
-        -command     => $bkMarkSub
-    );
-
-    $self->{'main_window'}->bind('<Alt-k>', $bkMarkSub);
-
-    $self->{'bookmarks_menu'}->command(
-        -label   => "Edit Bookmarks",
-        -command => sub { $self->edit_bookmarks() }
-    );
-
-    $self->{'bookmarks_menu'}->separator();
-
-    #
-    # Check to see if there is a bookmarks file
-    #
-    return unless -e $self->{BookMarksPath} && -r $self->{BookMarksPath};
-
-    use vars qw($ptkdb_bookmarks);
-    local ($ptkdb_bookmarks);    # ref to hash of bookmark entries
-
-    do $self->{BookMarksPath};   # eval the file
-
-    $self->add_bookmark_items(@$ptkdb_bookmarks);
 
 }
 
@@ -1627,42 +1720,10 @@ sub DoAlert {
 
 }
 
-sub simplePromptBox {
-    my ($self, $title, $defaultText, $okaySub, $cancelSub) = @_;
-    my ($top, $entry, $okayBtn);
-
-    $top = $self->{main_window}->Toplevel(-title => $title, -overanchor => 'cursor');
-
-    $Devel::ptkdb::promptString = $defaultText;
-
-    $entry = $top->Entry('-textvariable' => \$Devel::ptkdb::promptString)
-        ->pack(-side => 'top', -fill => 'both', -expand => 1);
-
-    $okayBtn = $top->Button(
-        -text => "Okay",
-        @Devel::ptkdb::button_font, -command => sub { &$okaySub(); $top->destroy; }
-    )->pack(-side => 'left', -fill => 'both', -expand => 1);
-
-    $top->Button(
-        -text    => "Cancel",
-        -command => sub { &$cancelSub() if $cancelSub; $top->destroy() },
-        @Devel::ptkdb::button_font,
-    )->pack(-side => 'left', -fill => 'both', -expand => 1);
-
-    $entry->icursor('end');
-
-    $entry->selectionRange(0, 'end') if $entry->can('selectionRange');    # some win32 Tk installations can't do this
-
-    $entry->focus();
-
-    return $top;
-
-}
-
 sub get_entry_text {
     my ($self) = @_;
 
-    return $self->{entry}->get();                                         # get the text in the entry
+    return $self->{entry}->get();    # get the text in the entry
 }
 
 #
@@ -2589,6 +2650,8 @@ sub get_state {
     return ($files, $expr_list, $eval_saved_text, $main_win_geometry);
 }
 
+=for obsolete
+
 sub restoreStateFile {
     my ($self, $fname) = @_;
     my ($saveCurFile, $s, @n, $n);
@@ -2621,6 +2684,8 @@ sub restoreStateFile {
         $self->{main_window}->geometry($main_win_geometry);
     }
 }
+
+=cut
 
 sub updateEvalWindow {
     my ($self, @result) = @_;
