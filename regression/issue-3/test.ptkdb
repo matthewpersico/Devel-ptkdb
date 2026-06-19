@@ -1,8 +1,11 @@
+## no critic (TestingAndDebugging::RequireUseStrict)
 $ptkdb_state = {
+                 'eval_saved_text' => undef,
+                 'main_win_geometry' => '800x600+1520+775',
                  'expr_list' => [
                                   {
-                                    'depth' => -1,
-                                    'expr' => '%h'
+                                    'expr' => '%h',
+                                    'depth' => -1
                                   },
                                   {
                                     'expr' => '$dummy',
@@ -13,31 +16,28 @@ $ptkdb_state = {
                                     'depth' => -1
                                   }
                                 ],
-                 'version' => '2.0.0',
-                 'main_win_geometry' => '800x600+1520+775',
-                 'eval_saved_text' => undef,
                  'files' => {
                               'regression/issue-3/test.pl' => [
                                                                 {
-                                                                  'line' => 11,
-                                                                  'expr' => undef,
                                                                   'type' => 'user',
-                                                                  'fname' => 'regression/issue-3/test.pl',
+                                                                  'text' => 'my %h = (
+',
+                                                                  'line' => 28,
+                                                                  'expr' => undef,
                                                                   'value' => '1',
-                                                                  'text' => 'my %h     = (
-'
+                                                                  'fname' => 'regression/issue-3/test.pl'
                                                                 },
                                                                 {
-                                                                  'line' => 9,
                                                                   'value' => '1',
+                                                                  'fname' => 'regression/issue-3/test.pl',
+                                                                  'expr' => undef,
                                                                   'text' => 'my $h     = { 43, 23 };
 ',
-                                                                  'expr' => undef,
                                                                   'type' => 'user',
-                                                                  'fname' => 'regression/issue-3/test.pl'
+                                                                  'line' => 9
                                                                 }
                                                               ]
-                            }
+                            },
+                 'version' => '2.0.0'
                };
-
-$ptkdb_state;
+return $ptkdb_state;

@@ -5,6 +5,7 @@ use warnings;
 
 use DateTime;
 
+#>>> perltidy
 my $date  = DateTime->now();
 my $h     = { 43, 23 };
 my $dummy = 6;
@@ -14,3 +15,4 @@ my %h     = (
     scl  => \$dummy
 );
 $dummy = 42;
+#<<< perltidy

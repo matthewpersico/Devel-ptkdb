@@ -96,8 +96,9 @@ sub write_state_file {
     my $d = Data::Dumper->new([$state], ['ptkdb_state']);
     $d->Purity(1);
 
-    print {$fh} $d->can('Dumpxs') ? $d->Dumpxs : $d->Dump;
-    print {$fh} "\n\$ptkdb_state;\n";
+    print $fh "## no critic (TestingAndDebugging::RequireUseStrict)\n";
+    print $fh $d->can('Dumpxs') ? $d->Dumpxs : $d->Dump;
+    print $fh "\nreturn \$ptkdb_state;  # prevents 'only used once' messages\n";
 
     close $fh
         or die "Could not close state file $state_file_name: $!";

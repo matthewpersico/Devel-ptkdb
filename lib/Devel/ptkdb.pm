@@ -6,11 +6,12 @@ use warnings;
 #
 # CPAN modules
 #
-use Carp qw(cluck carp confess);
+use Carp qw(cluck carp confess longmess);
 use Config;
 use Cwd qw(realpath);
 use Data::Dumper;
 use FileHandle;
+use Ref::Util qw(is_plain_arrayref);
 use Tk;
 use Tk::Dialog;
 use Tk::TextUndo;
@@ -35,13 +36,29 @@ my $isWin32 = $^O eq 'MSWin32';
 our $VERSION = "2.0.0";
 
 # We define console_say, debug_say and debug_dump here so they can be used in
-# BEGIN. We will also inject these into the DB namespace further down. If you
-# add any functions that you want available in DB as well as Devel::ptkdb
-# namespaces, go find the '# Inject' tag below and do so.
+# BEGIN. If you want to use them in other Devel::ptkdb modules, then define
+# subs in those modules like this:
+#
+# sub console_say {
+#    goto &Devel::ptkdb::console_say;
+# }
+#
+# This will invoke the call, with the same arguments, replacing the stack frame
+# (avoiding chatter in any stack traces), without the need for importing, which
+# could cause a circular modular inclusion issue.
+
 sub console_prompt {
+    my @msg;
+    for (@_) {
+        if (is_plain_arrayref($_)) {
+            push @msg, @{$_};
+        } else {
+            push @msg, $_;
+        }
+    }
     sprintf(
         "ptkdb> %s \n",
-        join("\n ", map { split(/\n/, $_) } @_)
+        join("\n", map { split(/\n/, $_) } @msg)
     );
 }
 
@@ -62,6 +79,12 @@ sub debug_say {
     my $output = console_string($args{msg});
 
     for ($args{action}) {
+        # Use 'skip' when you temporarily do not want any output.
+        /skip/ && do {
+            next;
+        };
+        # Use 'continue' when you temporarily do not want a trace but do want
+        # the message
         /continue/ && do {
             print $output;
             next;
@@ -82,8 +105,13 @@ sub debug_say {
             carp $output;
             next;
         };
+        /trace/ && do {
+            print $output . longmess();
+            next;
+        };
         otherwise:
-        confess "action '$args{action}' not one of warn, warntrace, die, dietrace";
+        confess
+            "action '$args{action}' not one of skip, continue, trace, warn, warntrace, die, dietrace";
     }
 }
 
@@ -98,12 +126,17 @@ sub debug_dump {
     {
         no strict 'refs';    ## no critic (TestingAndDebugging::ProhibitNoStrict)
         for my $dump (@{ $args{dump} }) {
-            $dump->{desc} = (
-                  $dump->{desc}
-                ? $dump->{desc} . ': '
+            my $descr = (
+                  $dump->{descr}
+                ? $dump->{descr} . ': '
                 : q()
             );
-            push @output, $dump->{desc} . Data::Dumper->Dump([$dump->{ref}], ['*' . $dump->{name}]),
+            my $name = (
+                  $dump->{name}
+                ? $dump->{name} . ': '
+                : q()
+            );
+            push @output, $descr . Data::Dumper->Dump([$dump->{ref}], ['*' . $name]),
                 "\n";
         }
     }
@@ -142,8 +175,8 @@ sub new {
 
     $self->{'expr_list'} = [];            # list of expressions to eval in our window fields:  {'expr'} The expr itself {'depth'} expansion depth
 
-    $self->{'brkPtCnt'}   = 0;
-    $self->{'brkPtSlots'} = [];           # open slots for adding breakpoints to the table
+    $self->{'brkpt_cnt'}   = 0;
+    $self->{'brkpt_slots'} = [];          # open slots for adding breakpoints to the table
 
     $self->{'user_window_init_list'}     = [];
     $self->{'user_window_DB_entry_list'} = [];
@@ -315,11 +348,11 @@ sub DoBugReport {
 sub brkpt {
     my ($fname, @idx) = @_;
 
-    my $offset = DB::dbline_offset($fname);
+    my $offset = DB::debugger_injected_line_offset($fname);
     my $window = Devel::ptkdb::window();
 
     for (@idx) {
-        if (!&DB::checkdbline($fname, $_ + $offset)) {
+        if (!&DB::is_line_breakable($fname, $_ + $offset)) {
             my ($package, $filename, $line) = caller;
             print "$filename:$line:  $fname line $_ is not breakable\n";
             next;
@@ -333,13 +366,13 @@ sub brkpt {
 #
 sub condbrkpt {
     my ($fname) = shift;
-    my $offset  = DB::dbline_offset($fname);
+    my $offset  = DB::debugger_injected_line_offset($fname);
     my $window  = Devel::ptkdb::window();
 
     while (@_) {    # arg loop
         my ($index, $expr) = splice @_, 0, 2;    # take args 2 at a time
 
-        if (!&DB::checkdbline($fname, $index + $offset)) {
+        if (!&DB::is_line_breakable($fname, $index + $offset)) {
             my ($package, $filename, $line) = caller;
             print "$filename:$line:  $fname line $index is not breakable\n";
             next;
@@ -365,7 +398,7 @@ sub brkonsub {
         $DB::sub{$_} =~ /(.*):([0-9]+)-([0-9]+)$/o;    # file name will be in $1, start line $2, end line $3
 
         for ($2 .. $3) {
-            next unless &DB::checkdbline($1, $_);
+            next unless &DB::is_line_breakable($1, $_);
             $window->insertBreakpoint($1, $_, 1);
             last;                                      # only need the one breakpoint
         }
@@ -727,7 +760,7 @@ sub setup_menu_bar_item_control {
 
     my $clearAllBkptsSub = sub {
         $self->removeAllBreakpoints($self->{current_file});
-        DB::clearalldblines();
+        DB::clear_all_breakpoint_info();
     };
 
     $mw->bind('<Alt-r>'     => $self->{shared_callbacks}->{runSub});
@@ -1241,7 +1274,7 @@ sub clear_breakpoint_tag {
 
 sub change_breakpoint_tag {
     my ($txtWidget, $self, $coord, $value) = @_;
-    my ($idx, $brkPt, @tagSet);
+    my ($idx, $brkpt, @tagSet);
 
     $idx = line_number_from_coord($txtWidget, $coord);
 
@@ -1250,8 +1283,8 @@ sub change_breakpoint_tag {
     #
     @tagSet = ("$idx.0", "$idx.$Devel::ptkdb::linenumber_length");
 
-    $brkPt = &DB::getdbline($self->{'current_file'}, $idx + $self->{'line_offset'});
-    return unless $brkPt;
+    $brkpt = &DB::get_breakpoint($self->{'current_file'}, $idx + $self->{'line_offset'});
+    return unless $brkpt;
 
     #
     # Check the breakpoint tag
@@ -1262,10 +1295,10 @@ sub change_breakpoint_tag {
         $txtWidget->tagRemove('breakdisabledLine', @tagSet);
     }
 
-    $brkPt->{'value'} = $value;
+    $brkpt->{'value'} = $value;
 
     if ($txtWidget) {
-        if ($brkPt->{'value'}) {
+        if ($brkpt->{'value'}) {
             $txtWidget->tagAdd('breaksetLine', @tagSet);
         } else {
             $txtWidget->tagAdd('breakdisabledLine', @tagSet);
@@ -1754,11 +1787,11 @@ sub clear_entry_text {
     return $str;
 }
 
-sub brkPtCheckbutton {
-    my ($self, $fname, $idx, $brkPt) = @_;
+sub brkpt_checkbutton {
+    my ($self, $fname, $idx, $brkpt) = @_;
     my ($widg);
 
-    change_breakpoint_tag($self->{'text'}, $self, "$idx.0", $brkPt->{'value'})
+    change_breakpoint_tag($self->{'text'}, $self, "$idx.0", $brkpt->{'value'})
         if $fname eq $self->{'current_file'};
 
 }
@@ -1777,18 +1810,18 @@ sub insertBreakpoint {
     my ($self, $fname, @brks) = @_;
     my ($btn, $cnt, $item);
 
-    my $offset = DB::dbline_offset($fname);
+    my $offset = DB::debugger_injected_line_offset($fname);
 
     while (@brks) {
         my ($index, $value, $expression) = splice @brks, 0, 3;    # take args 3 at a time
 
-        my $brkPt = {};
-        my $txt   = &DB::getdbtextline($fname, $index);
-        @$brkPt{ 'type', 'line', 'expr', 'value', 'fname', 'text' }
+        my $brkpt = {};
+        my $txt   = &DB::get_code_line($fname, $index);
+        @$brkpt{ 'type', 'line', 'expr', 'value', 'fname', 'text' }
             = ('user', $index, $expression, $value, $fname, "$txt");
 
-        &DB::setdbline($fname, $index + $offset, $brkPt);
-        $self->add_brkpt_to_brkpt_page($brkPt);
+        &DB::set_breakpoint($fname, $index + $offset, $brkpt);
+        $self->add_brkpt_to_brkpt_page($brkpt);
 
         next unless $fname eq $self->{'current_file'};
 
@@ -1802,15 +1835,15 @@ sub insertBreakpoint {
 }
 
 sub add_brkpt_to_brkpt_page {
-    my ($self, $brkPt) = @_;
+    my ($self, $brkpt) = @_;
     my ($btn,  $fname,   $index, $frm, $upperFrame, $lowerFrame);
     my ($row,  $btnName, $width);
     #
     # Add the breakpoint to the breakpoints page
     #
-    ($fname, $index) = @$brkPt{ 'fname', 'line' };
+    ($fname, $index) = @$brkpt{ 'fname', 'line' };
     return if exists $self->{'breakpts_table_data'}->{"$fname:$index"};
-    $self->{'brkPtCnt'} += 1;
+    $self->{'brkpt_cnt'} += 1;
 
     $btnName = $fname;
     $btnName =~ s/.*\/([^\/]*)$/$1/o;
@@ -1822,8 +1855,8 @@ sub add_brkpt_to_brkpt_page {
 
     $btn = $upperFrame->Checkbutton(
         -text     => "$btnName:$index",
-        -variable => \$brkPt->{'value'},                                       # CAUTION value tracking
-        -command  => sub { $self->brkPtCheckbutton($fname, $index, $brkPt) }
+        -variable => \$brkpt->{'value'},                                        # CAUTION value tracking
+        -command  => sub { $self->brkpt_checkbutton($fname, $index, $brkpt) }
     );
 
     $btn->pack(-side => 'left');
@@ -1844,12 +1877,12 @@ sub add_brkpt_to_brkpt_page {
 
     $lowerFrame->Label(-text => "Cond:")->pack(-side => 'left');
 
-    $btn = $lowerFrame->Entry(-textvariable => \$brkPt->{'expr'});
+    $btn = $lowerFrame->Entry(-textvariable => \$brkpt->{'expr'});
     $btn->pack(-side => 'left', -fill => 'x', -expand => 1);
 
     $frm->pack(-side => 'top', -fill => 'x', -expand => 1);
 
-    $row = pop @{ $self->{'brkPtSlots'} } or $row = $self->{'brkPtCnt'};
+    $row = pop @{ $self->{'brkpt_slots'} } or $row = $self->{'brkpt_cnt'};
 
     $self->{'breakpts_table'}->put($row, 1, $frm);
 
@@ -1880,13 +1913,13 @@ sub remove_brkpt_from_brkpt_page {
     # Add this now empty slot to the list of ones we have open
     #
 
-    push @{ $self->{'brkPtSlots'} }, $self->{'breakpts_table_data'}->{"$fname:$idx"}->{'row'};
+    push @{ $self->{'brkpt_slots'} }, $self->{'breakpts_table_data'}->{"$fname:$idx"}->{'row'};
 
-    $self->{'brkPtSlots'} = [sort { $b <=> $a } @{ $self->{'brkPtSlots'} }];
+    $self->{'brkpt_slots'} = [sort { $b <=> $a } @{ $self->{'brkpt_slots'} }];
 
     delete $self->{'breakpts_table_data'}->{"$fname:$idx"};
 
-    $self->{'brkPtCnt'} -= 1;
+    $self->{'brkpt_cnt'} -= 1;
 
 }
 
@@ -1896,11 +1929,11 @@ sub remove_brkpt_from_brkpt_page {
 sub insertTempBreakpoint {
     my ($self, $fname, $index) = @_;
 
-    my $offset = DB::dbline_offset($fname);
+    my $offset = DB::debugger_injected_line_offset($fname);
 
-    return if (&DB::getdbline($fname, $index + $offset));    # we already have a breakpoint here
+    return if (&DB::get_breakpoint($fname, $index + $offset));    # we already have a breakpoint here
 
-    &DB::setdbline(
+    &DB::set_breakpoint(
         $fname, $index + $offset,
         { 'type' => 'temp', 'line' => $index, 'value' => 1 }
     );
@@ -1910,30 +1943,30 @@ sub insertTempBreakpoint {
 sub reinsertBreakpoints {
     my ($self, $fname) = @_;
 
-    for my $brkPt (&DB::getbreakpoints($fname)) {
+    for my $brkpt (&DB::get_breakpoints($fname)) {
         #
         # Our breakpoints are indexed by line
         # therefore we can have 'gaps' where there
         # lines, but not breaks set for them.
         #
-        next unless defined $brkPt;
+        next unless defined $brkpt;
 
-        $self->insertBreakpoint($fname, @$brkPt{ 'line', 'value', 'expr' })
-            if ($brkPt->{'type'} eq 'user');
-        $self->insertTempBreakpoint($fname, $brkPt->{line}) if ($brkPt->{'type'} eq 'temp');
+        $self->insertBreakpoint($fname, @$brkpt{ 'line', 'value', 'expr' })
+            if ($brkpt->{'type'} eq 'user');
+        $self->insertTempBreakpoint($fname, $brkpt->{line}) if ($brkpt->{'type'} eq 'temp');
     }
 
 }
 
 sub removeBreakpointTags {
-    my ($self, @brkPts) = @_;
+    my ($self, @brkpts) = @_;
     my ($idx);
 
-    for my $brkPt (@brkPts) {
+    for my $brkpt (@brkpts) {
 
-        $idx = $brkPt->{'line'};
+        $idx = $brkpt->{'line'};
 
-        if ($brkPt->{'value'}) {
+        if ($brkpt->{'value'}) {
             $self->{'text'}
                 ->tagRemove("breaksetLine", "$idx.0", "$idx.$Devel::ptkdb::linenumber_length");
         } else {
@@ -1952,21 +1985,21 @@ sub removeBreakpoint {
     my ($self, $fname, @idx) = @_;
     my ($chkIdx, $i, $j, $info);
 
-    my $offset = DB::dbline_offset($fname);
+    my $offset = DB::debugger_injected_line_offset($fname);
 
     for my $idx (@idx) {
         next unless defined $idx;
-        my $brkPt = &DB::getdbline($fname, $idx + $offset);
-        next unless $brkPt;    # if we do not have an entry
-        &DB::cleardbline($fname, $idx + $offset);
+        my $brkpt = &DB::get_breakpoint($fname, $idx + $offset);
+        next unless $brkpt;    # if we do not have an entry
+        &DB::clear_breakpoint_info($fname, $idx + $offset);
 
         $self->remove_brkpt_from_brkpt_page($fname, $idx);
 
-        next unless $brkPt->{fname} eq $self->{'current_file'};    # if this isn't our current file there will be no controls
+        next unless $brkpt->{fname} eq $self->{'current_file'};    # if this isn't our current file there will be no controls
 
         # Delete the ext associated with the breakpoint expression (if any)
 
-        $self->removeBreakpointTags($brkPt);
+        $self->removeBreakpointTags($brkpt);
     }
 
     return;
@@ -1975,7 +2008,7 @@ sub removeBreakpoint {
 sub removeAllBreakpoints {
     my ($self, $fname) = @_;
 
-    $self->removeBreakpoint($fname, &DB::getdblineindexes($fname));
+    $self->removeBreakpoint($fname, &DB::get_breakpoint_indexes($fname));
 
 }
 
@@ -2240,17 +2273,17 @@ sub set_line {
 #
 # $fname the 'new' file to view
 # $line the line number we're at
-# $brkPts any breakpoints that may have been set in this file
+# $brkpts any breakpoints that may have been set in this file
 #
 sub set_file {
     my ($self,    $fname, $line) = @_;
     my ($lineStr, $text,  $i, @text, $noCode, $title);
     my (@breakableTagList, @nonBreakableTagList);
 
-    my $lines = DB::dbline_lines($fname);
+    my $lines = DB::get_code_lines($fname);
     return unless $lines;
 
-    my $offset = DB::dbline_offset($fname);
+    my $offset = DB::debugger_injected_line_offset($fname);
 
     $self->{'line_offset'} = $offset;
 
@@ -2796,7 +2829,7 @@ sub setupEvalWindow {
 sub filterBreakPts {
     my ($breakPtsListRef, $fname) = @_;
 
-    my $lines = DB::dbline_lines($fname);
+    my $lines = DB::get_code_lines($fname);
     return unless $lines;
 
     #
@@ -2859,7 +2892,7 @@ sub SetBreakPoint {
     my $lineno = $window->get_lineno();
     my $expr   = $window->clear_entry_text();
 
-    if (!&DB::checkdbline($window->{current_file}, $lineno + $self->{'line_offset'})) {
+    if (!&DB::is_line_breakable($window->{current_file}, $lineno + $self->{'line_offset'})) {
         $window->DoAlert("line $lineno in $window->{current_file} is not breakable");
         return 0;
     }
@@ -2942,7 +2975,7 @@ sub retrieve_text_expr {
 
     $col -= $offset;
 
-    $data = DB::getdbtextline($self->{current_file}, $idx);
+    $data = DB::get_code_line($self->{current_file}, $idx);
 
     return if (!defined $data || $data eq '0');        # no executable text, no real variable(?)
 

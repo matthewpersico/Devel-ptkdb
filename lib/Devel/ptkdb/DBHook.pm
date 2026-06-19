@@ -8,7 +8,7 @@ use warnings;
 # Core and CPAN modules
 use Carp;
 
-# Project moduiles
+# Project modules
 ## None
 
 # Package Data
@@ -16,6 +16,36 @@ my %PD = (
     brkpt_search_line_count => 20,
     brkpt_fixed_msg         => [],
 );
+
+## ===========================================================================
+## Useful aliases
+
+sub ddn {
+    goto &Data::Dumper::new;
+}
+
+sub ddd {
+    goto &Data::Dumper::Dump;
+}
+
+## ===========================================================================
+## Devel::ptkdb access
+sub console_say {
+    goto &Devel::ptkdb::console_say;
+}
+
+sub console_string {
+    goto &Devel::ptkdb::console_string;
+}
+
+sub debug_say {
+    goto &Devel::ptkdb::debug_say;
+}
+
+sub debug_dump {
+    goto &Devel::ptkdb::debug_dump;
+}
+
 ## ===========================================================================
 ## dbline handlers
 sub _dbline_key {
@@ -54,30 +84,36 @@ sub _dbline_hash {
     return *{$glob}{HASH};
 }
 
-sub dbline_offset {
+sub debugger_injected_line_offset {
     my ($fname) = @_;
 
     my $lines = _dbline_array($fname);
     return 0 unless $lines;
 
-    return defined $lines->[1] && $lines->[1] =~ /use\s+.*Devel::_?ptkdb/ ? 1 : 0;
+    ## Yes, we are checking for the debugger injecting itself on the first line
+    ## of the code, which is typically the zeroth [0] element.  But not in the
+    ## debugger. Apparently the zeroth element of *dbline goes
+    ## unused. <facepalm>.
+    my $diio = defined $lines->[1] && $lines->[1] =~ /use\s+.*Devel::_?ptkdb/ ? 1 : 0;
+    if ($diio) {
+        debug_say(
+            msg    => "Offset adjusted!",
+            action => 'trace'
+        );
+    }
+    return $diio;
 }
 
-sub dbline_lines {
-    my ($fname) = @_;
-    return _dbline_array($fname);
-}
-
-sub checkdbline {
+sub is_line_breakable {
     my ($fname, $lineno) = @_;
 
     my $lines = _dbline_array($fname);
     return 0 unless $lines;
 
-    return $lines->[$lineno] != 0;
+    return (0 + $lines->[$lineno]) != 0;
 }
 
-sub setdbline {
+sub set_breakpoint {
     my ($fname, $lineno, $value) = @_;
 
     my $breakpoints = _dbline_hash($fname);
@@ -87,7 +123,7 @@ sub setdbline {
     return 1;
 }
 
-sub getdbline {
+sub get_breakpoint {
     my ($fname, $lineno) = @_;
 
     my $breakpoints = _dbline_hash($fname);
@@ -96,7 +132,14 @@ sub getdbline {
     return $breakpoints->{$lineno};
 }
 
-sub getdbtextline {
+sub get_breakpoints {
+    my ($fname) = @_;
+
+    my $breakpoints = _dbline_hash($fname);
+    return values %{$breakpoints};
+}
+
+sub get_code_line {
     my ($fname, $lineno) = @_;
 
     my $lines = _dbline_array($fname);
@@ -105,7 +148,12 @@ sub getdbtextline {
     return $lines->[$lineno];
 }
 
-sub cleardbline {
+sub get_code_lines {
+    my ($fname) = @_;
+    return _dbline_array($fname);
+}
+
+sub clear_breakpoint_info {
     my ($fname, $lineno, $clearsub) = @_;
 
     my $breakpoints = _dbline_hash($fname);
@@ -118,7 +166,30 @@ sub cleardbline {
     return $value;
 }
 
-sub getdblineindexes {
+sub clear_all_breakpoint_info {
+    my ($clearsub) = @_;
+
+    while (my ($key, $value) = each %main::) {
+        next unless $key =~ /^_</;
+
+        my $fname = $key;
+        $fname =~ s/^_<//;
+
+        my $breakpoints = _dbline_hash($fname);
+        next unless $breakpoints;
+
+        for my $dbkey (keys %{$breakpoints}) {
+            my $brkpt = delete $breakpoints->{$dbkey};
+            next unless $brkpt && $clearsub;
+
+            $clearsub->($brkpt);
+        }
+    }
+
+    return;
+}
+
+sub get_breakpoint_indexes {
     my ($fname) = @_;
 
     my $breakpoints = _dbline_hash($fname);
@@ -135,46 +206,21 @@ sub getdblineindexes {
 # follows:
 
 # - Start at the original line number.
-# - If no match, search backwards no more than $PD{brkpt_search_line_count} lines.
-# - If no match, start at the original line plus one, and search forward no more than $PD{brkpt_search_line_count} lines.
+
+# - If no match, search backwards no more than $PD{brkpt_search_line_count}
+#   lines.
+
+# - If no match, start at the original line plus one, and search forward no
+#   more than $PD{brkpt_search_line_count} lines.
 
 # If there's no exact match after all that, then we try to rewrite the
-# breakpoint as close as possible to the old line location taking into
-# account unbreakable lines.
+# breakpoint as close as possible to the old line location taking into account
+# unbreakable lines.
 
 sub fix_breakpoints {
-    my ($lines, @brkpts) = @_;
-
-    my @retList;
-    my $nLines = @{$lines};
-
-    for my $brkpt (@brkpts) {
-        my $startLine
-            = $brkpt->{line} > $PD{brkpt_search_line_count}
-            ? $brkpt->{line} - $PD{brkpt_search_line_count}
-            : 0;
-        my $endLine
-            = $brkpt->{line} < $nLines - $PD{brkpt_search_line_count}
-            ? $brkpt->{line} + $PD{brkpt_search_line_count}
-            : $nLines;
-
-        for ((reverse $startLine .. $brkpt->{line}), $brkpt->{line} + 1 .. $endLine) {
-            next unless defined $lines->[$_];
-            next unless $brkpt->{text} eq $lines->[$_];
-
-            $brkpt->{line} = $_;
-            push @retList, $brkpt;
-            last;
-        }
-    }
-
-    return @retList;
-}
-
-sub fix_breakpoints_new {
     my (%args) = (
-        key    => q(),
-        offset => 0,
+        fname  => q(),    # The code file we are examining
+        offset => 0,      # Used to avoid
         brkpts => [],
         lines  => [],
         @_
@@ -189,29 +235,72 @@ sub fix_breakpoints_new {
     foreach my $brkpt (@{ $args{brkpts} }) {
         $found = 0;
 
-        # See if the text hasn't changed
-        if ($brkpt->{text} eq $args{dbline}->[$brkpt->{line}]) {
+        debug_dump(
+            action => 'skip',
+            dump   => [
+                {   descr => '$brkpt->{text}',
+                    ref   => $brkpt->{text}
+                },
+                {   descr => '$brkpt->{line}',
+                    ref   => $brkpt->{line},
+                },
+                {   descr => '$args{lines}->[$brkpt->{line}]',
+                    ref   => $args{lines}->[$brkpt->{line}]
+                },
+            ]
+        );
+
+        # We compare code lines sans whitespace to help match in the face of
+        # perl tidying.
+        my $code_text = '';
+        if (defined $args{lines}->[$brkpt->{line}]) {
+            $code_text = $args{lines}->[$brkpt->{line}];
+            $code_text =~ s/\s+//g;
+        }
+        my $brkpt_text = $brkpt->{text};
+        $brkpt->{text} =~ s/\s+//g;
+        if ($brkpt_text eq $code_text) {
             $found = 1;
             push @retList, $brkpt;
             next BREAKPOINTS;
         }
 
+        my $pivot;
         # Look for the same line nearby
         if (not $found) {
-            $startLine
-                = $brkpt->{line} > $PD{brkpt_search_line_count}
-                ? $brkpt->{line} - $PD{brkpt_search_line_count}
-                : 0;
-            $endLine
-                = $brkpt->{line} < $nLines - $PD{brkpt_search_line_count}
-                ? $brkpt->{line} + $PD{brkpt_search_line_count}
-                : $nLines;
+            $startLine = $brkpt->{line} - $PD{brkpt_search_line_count};
+            $startLine = 0 if ($startLine < 0);
+            $endLine   = $brkpt->{line} + $PD{brkpt_search_line_count};
+            $endLine   = $nLines - 1 if $endLine > $nLines;
+            $pivot     = int(($endLine - $startLine) / 2);
+
+            debug_dump(
+                action => 'skip',
+                dump   => [
+                    {   descr => 'startLine',
+                        ref   => $startLine
+                    },
+                    {   descr => 'endLine',
+                        ref   => $endLine
+                    },
+                    {   descr => '$brkpt->{line}',
+                        ref   => $brkpt->{line}
+                    },
+                    {   descr => '$pivot',
+                        ref   => $pivot
+                    },
+                ]
+            );
             NEARBY_SEARCH:
-            for ((reverse $startLine .. $brkpt->{line}), $brkpt->{line} + 1 .. $endLine) {
-                next unless $brkpt->{text} eq $args{lines}->[$_];
+            for ((reverse $startLine .. $pivot), $pivot + 1 .. $endLine) {
+                $code_text = $args{lines}->[$_];
+                $code_text =~ s/\s+//g;
+                $brkpt_text = $brkpt->{text};
+                $brkpt->{text} =~ s/\s+//g;
+                next unless $brkpt_text eq $code_text;
                 push @{ $PD{brkpt_fixed_msg} },
                     (
-                    "Breakpoint $args{key} (line $brkpt->{line}) was moved",
+                    "Breakpoint $args{fname} (line $brkpt->{line}) was moved",
                     " to line $_ because the statement moved.",
                     q()
                     );
@@ -224,19 +313,15 @@ sub fix_breakpoints_new {
 
         # Try and break beforehand. Afterward may be too late.
         if (not $found) {
-            $startLine
-                = $brkpt->{line} > $PD{brkpt_search_line_count}
-                ? $brkpt->{line} - $PD{brkpt_search_line_count}
-                : 0;
-            PRIOR_POSITION: for ((reverse $startLine .. $brkpt->{line} - 1)) {
-                my $brkptLine = $_ + $args{offset};
-                if (DB::checkdbline($args{key}, $brkptLine)) {
-                    my ($from, $to) = ($brkpt->{text}, $args{lines}->[$brkptLine]);
+            PRIOR_POSITION: for ((reverse $startLine .. $pivot - 1)) {
+                my $brkpt_line = $_ + $args{offset};
+                if (DB::is_line_breakable($args{fname}, $brkpt_line)) {
+                    my ($from, $to) = ($brkpt->{text}, $args{lines}->[$brkpt_line]);
                     chomp $from;
                     chomp $to;
                     push @{ $args{brkpt_fixed_msg} },
                         (
-                        "Breakpoint $args{key} (line $brkpt->{line}) was moved",
+                        "Breakpoint $args{fname} (line $brkpt->{line}) was moved",
                         " from [$from]",
                         " to [$to] (line $_)",
                         " because the original statement cannot be found.",
@@ -257,17 +342,16 @@ sub fix_breakpoints_new {
             chomp $text;
             push @{ $args{brkpt_fixed_msg} },
                 (
-                "Breakpoint $args{key} (line $brkpt->{line})",
+                "Breakpoint $args{fname} (line $brkpt->{line})",
                 " for statement [$text]",
                 " is lost due to code changes.",
                 q()
                 );
         }
     }
+    scalar(@{ $PD{brkpt_fixed_msg} }) && console_say($PD{brkpt_fixed_msg});
     return @retList;
 }
-
-#=cut
 
 sub breakpoints_to_save {
     my $brkList = {};
@@ -297,27 +381,39 @@ sub breakpoints_to_save {
 }
 
 sub restore_breakpoints_from_save {
-    my ($brkList) = @_;
+    my ($brkpt_list) = @_;
+    my ($fname, $list, $brkpt, @newList);
 
-    while (my ($fname, $list) = each %{$brkList}) {
-        ## obsolete $fname =~ s/^_<//;    # temporary compatibility with old state files
-
-        my $lines       = _dbline_array($fname);
+    # $fname is the code where breakpoints are set and $list is the list of
+    # breakpoints in that code.
+    while (my ($fname, $list) = each %{$brkpt_list}) {
+        my $lines = _dbline_array($fname);
+        debug_dump(
+            action => 'skip',
+            msg    => 'Checking for adjusting the offset from 0 to 1.',
+            dump   => [
+                {   descr => "\$lines of $fname",
+                    ref   => $lines
+                }
+            ]
+        );
         my $breakpoints = _dbline_hash($fname);
-
         next unless $lines && $breakpoints;
 
-        my $offset = 0;
-        $offset = 1 if defined $lines->[1] && $lines->[1] =~ /use\s+.*Devel::_?ptkdb/;
+        my $offset = debugger_injected_line_offset();
 
-        my @newList = fix_breakpoints($lines, @{$list});
+        my @newList = fix_breakpoints(
+            fname  => $fname,
+            offset => $offset,
+            brkpts => $list,
+            lines  => $lines
+        );
 
         for my $brkpt (@newList) {
-            if (!DB::checkdbline($fname, $brkpt->{line} + $offset)) {
-                print "Breakpoint $fname:$brkpt->{line} in config file is not breakable.\n";
+            if (!DB::is_line_breakable($fname, $brkpt->{line} + $offset)) {
+                console_say("Breakpoint $fname:$brkpt->{line} in config file is not breakable.");
                 next;
             }
-
             $breakpoints->{ $brkpt->{line} } = { %{$brkpt} };
         }
     }
@@ -339,7 +435,8 @@ sub restore_breakpoint_state {
 
 # =========================================================================
 # Below here is code that existed prior to the re-architecting of
-# 2026/June. Any function that can be used will be hoisted up above.
+# 2026/June. Any function that can be used untouched, or is edited to be used,
+# will be hoisted up above.
 
 # Here's the clue...
 # eval only seems to eval the context of
@@ -376,43 +473,6 @@ sub updateExprs {
         }
     }
 
-}
-
-sub clearalldblines {
-    my ($clearsub) = @_;
-
-    while (my ($key, $value) = each %main::) {
-        next unless $key =~ /^_</;
-
-        my $fname = $key;
-        $fname =~ s/^_<//;
-
-        my $breakpoints = _dbline_hash($fname);
-        next unless $breakpoints;
-
-        for my $dbkey (keys %{$breakpoints}) {
-            my $brkpt = delete $breakpoints->{$dbkey};
-            next unless $brkpt && $clearsub;
-
-            $clearsub->($brkpt);
-        }
-    }
-
-    return;
-}
-
-sub getbreakpoints {
-    my (@fnames) = @_;
-    my @retList;
-
-    for my $fname (@fnames) {
-        my $breakpoints = _dbline_hash($fname);
-        next unless $breakpoints;
-
-        push @retList, values %{$breakpoints};
-    }
-
-    return @retList;
 }
 
 sub dbint_handler {
@@ -506,11 +566,11 @@ sub isBreakPoint {
     # 2nd If there is a breakpoint check to see if it's check box control is 'on'
     # 3rd If there is any kind of expression, evaluate it and see if it's true.
     #
-    $brkpt = &DB::getdbline($fname, $line);
+    $brkpt = &DB::get_breakpoint($fname, $line);
 
     return 0 if (!$brkpt || !$brkpt->{'value'} || !breakPointEvalExpr($brkpt, $package));
 
-    &DB::cleardbline($fname, $line) if ($brkpt->{'type'} eq 'temp');
+    &DB::clear_breakpoint_info($fname, $line) if ($brkpt->{'type'} eq 'temp');
 
     $DB::subroutine_depth = $DB::subroutine_depth;
 

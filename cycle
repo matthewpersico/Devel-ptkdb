@@ -1,13 +1,63 @@
 # -*- sh -*-
 # shellcheck shell=bash
-if [[ $1 =~ -t ]]; then
+
+declare OPTSARGS
+declare shortopts='tr'
+declare longopts='no-log'
+
+declare opt_tidy=0
+declare opt_run_only=0
+declare opt_no_log=0
+
+# Process the command line.
+OPTSARGS=$(getopt -a -o "$shortopts" -l "$longopts" -n "$(basename "$0")" -- "$@") ## "${FUNCNAME[0]}" -- "$@") ## in functions
+declare status=$?
+((status != 0)) && exit $status ## return $status ## in functions
+
+# Reset the command line ($@).
+eval set -- "$OPTSARGS"
+
+# Reprocess the command line, extracting options and their arguments into
+# variables.
+while true
+do
+    declare option=$1
+    shift
+    [ "$option" != '--' ] && option=${option##-} && option=${option##-}
+    case "$option" in
+        t )
+            opt_tidy=1
+            ;;
+        r )
+            opt_run_only=1
+            ;;
+        no-log )
+            opt_no_log=1
+            ;;
+        --) break ;; ## VITAL!!! Exits the while loop, no more options,
+                     ## remaining $*, if any, are args
+        *)
+            cmd-echo -e -- "$option is an invalid option."
+            exit 1 ## return 1 in functions
+            ;;
+    esac
+done
+
+
+if ((opt_tidy)); then
     /home/matthew/personal/bin/perltidy-bulk --update --all || exit
 fi
 
-if [[ ! $1 =~ -jr ]]; then
+if (( ! opt_run_only )); then
     { perl Makefile.PL \
         && make test; } || exit
 fi
 
-logit  --gui --log refactor -- \
-       perl -Iblib/lib -Iblib/arch -Mblib -d:ptkdb regression/issue-3/test.pl
+declare -a cmd=(perl -Iblib/lib -Iblib/arch -Mblib -d:ptkdb regression/issue-3/test.pl)
+
+set -x
+if ((opt_no_log)); then
+    "${cmd[@]}"
+else
+    logit --gui --log refactor -- "${cmd[@]}"
+fi
