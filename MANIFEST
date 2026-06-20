@@ -1,5 +1,6 @@
 Changes
 lib/Devel/ptkdb.pm
+lib/Devel/ptkdb/Cmd.pm
 lib/Devel/ptkdb/DBHook.pm
 lib/Devel/ptkdb/State.pm
 Makefile.PL

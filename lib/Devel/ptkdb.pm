@@ -23,6 +23,7 @@ use Tk::Table;
 #
 # Package modules
 #
+use Devel::ptkdb::Cmd;
 use Devel::ptkdb::State;
 
 #
@@ -146,6 +147,89 @@ sub debug_dump {
     );
 }
 
+sub do_alert {
+    my $self = shift;
+    my %args = (
+        -title => 'ptkdb error',
+        -msg   => 'Unspecified error.',
+        @_
+    );
+
+    my $message = (
+        is_plain_arrayref($args{-msg})
+        ? join(
+            qq(\n),
+            map { split(/\n/, $_) } @{ $args{-msg} }
+            )
+        : $args{-msg}
+    );
+
+    my $previous_focus = $self->{main_window}->focusCurrent();
+
+    my $top = $self->{main_window}->Toplevel(-title => $args{-title});
+
+    $top->transient($self->{main_window});
+
+    $top->Label(
+        -text       => $message,
+        -justify    => 'left',
+        -wraplength => 600,
+    )->pack(
+        -side   => 'top',
+        -fill   => 'both',
+        -expand => 1,
+        -padx   => 10,
+        -pady   => 10,
+    );
+
+    $top->Button(
+        -text    => 'OK',
+        -command => sub { $top->destroy(); },
+    )->pack(
+        -side => 'bottom',
+        -pady => 10,
+    );
+
+    $top->bind(
+        '<Destroy>' => sub {
+            if ($previous_focus && Tk::Exists($previous_focus)) {
+                $previous_focus->afterIdle(sub { $previous_focus->focusForce(); });
+            }
+        }
+    );
+
+    return;
+}
+
+sub error_dialog {
+    my $self = shift;
+    my %args = (
+        -title => 'ptkdb error',
+        -msg   => ['Unspecified error.'],
+        @_
+    );
+
+    my $previous_focus = $self->{main_window}->focusCurrent();
+    my $message        = join qq(\n), @{ $args{-msg} };
+
+    $self->{main_window}->messageBox(
+        %args,
+        -type => 'OK',
+        -icon => 'error',
+    );
+
+    if ($previous_focus && Tk::Exists($previous_focus)) {
+        $previous_focus->afterIdle(
+            sub {
+                $previous_focus->focusForce();
+                $previous_focus->icursor('end')
+                    if $previous_focus->can('icursor');
+            }
+        );
+    }
+
+    return;
+}
 #
 # Constructor for our Devel::ptkdb
 #
@@ -226,8 +310,6 @@ sub window {
 # 2026/June. Any function that can be used will be hoisted up above.
 
 sub BEGIN {
-    console_say(q(Devel::ptkdb BEGIN...)) if (not $^C);
-
     {
         no warnings 'once';
         $DB::on = 0;
@@ -527,23 +609,67 @@ sub setup_main_window {
     #
     $self->{main_window}->protocol('WM_DELETE_WINDOW', sub { $self->close_ptkdb_window(); });
 
-    # Menu bar
+    # Shared between the GUI and the command line
+    $self->setup_shared_callbacks();
 
+    # Widgets
     $self->setup_menu_bar();
-
-    # Button bar
-
     $self->setup_button_bar();
+    $self->setup_command_line();    # Allows typing some debugger commands
+    $self->setup_frames();          # Setup our Code, Data, and breakpoints
 
-    #
-    # setup Frames
-    #
-    # Setup our Code, Data, and breakpoints
-
-    $self->setup_frames();
-
+    # Start in the command line box
+    $self->focus_debugger_command_widget();
 }
 
+# Shared between the GUI and the command line
+sub setup_shared_callbacks {
+    my ($self) = @_;
+    $self->{shared_callbacks} = {
+        runSub => sub { $DB::step_over_depth = -1; $self->{'event'} = 'run' },
+
+        runToSub => sub {
+            $self->{'event'} = 'run' if $self->SetBreakPoint(1);
+        },
+
+        stepOverSub => sub {
+            &DB::SetStepOverBreakPoint(0);
+            $DB::single = 1;
+            $self->{'event'} = 'step';
+        },
+
+        stepInSub => sub {
+            $DB::step_over_depth = -1;
+            $DB::single          = 1;
+            $self->{'event'}     = 'step';
+        },
+
+        returnSub => sub {
+            &DB::SetStepOverBreakPoint(-1);
+            $self->{'event'} = 'run';
+        },
+
+        quitSub => sub {
+            $self->close_ptkdb_window();
+        },
+    };
+}
+
+sub focus_debugger_command_widget {
+    my ($self) = @_;
+
+    my $entry_widget = $self->{debugger_command_widget}
+        or return;
+
+    $entry_widget->afterIdle(
+        sub {
+            $entry_widget->focusForce();
+            $entry_widget->icursor('end');
+        }
+    );
+
+    return;
+}
 #
 # Check for changes to the bookmarks and quit
 #
@@ -732,31 +858,6 @@ sub setup_menu_bar_item_control {
     my ($self) = @_;
 
     my $mw = $self->{main_window};
-
-    $self->{shared_callbacks} = {
-        runSub => sub { $DB::step_over_depth = -1; $self->{'event'} = 'run' },
-
-        runToSub => sub {
-            $self->{'event'} = 'run' if $self->SetBreakPoint(1);
-        },
-
-        stepOverSub => sub {
-            &DB::SetStepOverBreakPoint(0);
-            $DB::single = 1;
-            $self->{'event'} = 'step';
-        },
-
-        stepInSub => sub {
-            $DB::step_over_depth = -1;
-            $DB::single          = 1;
-            $self->{'event'}     = 'step';
-        },
-
-        returnSub => sub {
-            &DB::SetStepOverBreakPoint(-1);
-            $self->{'event'} = 'run';
-        },
-    };
 
     my $clearAllBkptsSub = sub {
         $self->removeAllBreakpoints($self->{current_file});
@@ -1061,7 +1162,47 @@ sub setup_button_bar {
         'stepin_button', 'stepover_button', 'return_button', 'run_button',
         'run_to_button', 'breakpt_button'
         };
+}
 
+sub setup_command_line {
+    my ($self) = @_;
+
+    my $mw = $self->{main_window};
+
+    $self->{debugger_command_obj} = Devel::ptkdb::Cmd->new(
+        window => $self,
+    );
+
+    my $frm = $mw->Frame()->pack(
+        -side => 'top',
+        -fill => 'x',
+    );
+
+    $frm->Label(
+        -text => 'Command:',
+    )->pack(-side => 'left');
+
+    my $entry_widget = $frm->Entry(
+        -width => 40,
+    )->pack(
+        -side   => 'left',
+        -fill   => 'x',
+        -expand => 1,
+    );
+
+    my $run_command = sub {
+        my $command = $entry_widget->get();
+        $entry_widget->delete(0, 'end');
+        $self->{debugger_command_obj}->execute($command);
+        $self->focus_debugger_command_widget();
+        return;
+    };
+
+    $entry_widget->bind('<Return>' => $run_command);
+
+    $self->{debugger_command_widget} = $entry_widget;
+
+    return;
 }
 
 sub edit_bookmarks {
@@ -2371,13 +2512,32 @@ sub get_lineno {
     return int $info;
 }
 
+sub goto_code_line {
+    my ($self, $line) = @_;
+
+    return unless defined $line;
+
+    $line =~ s/^\s+|\s+$//g;
+    return unless $line =~ /^\d+$/;
+
+    my $text_line = $line - $self->{'line_offset'};
+
+    return if $text_line < 1;
+
+    $self->{'text'}->see("$text_line.0");
+    $self->{'text'}->markSet('insert', "$text_line.0");
+
+    return 1;
+}
+
 sub DoGoto {
     my ($self, $entry) = @_;
 
     my $txt = $entry->get();
 
-    $txt =~ s/(\d*).*/$1/;                       # take the first blob of digits
-    if ($txt eq "") {
+    $txt =~ s/(\d*).*/$1/;    # take the first blob of digits
+
+    unless ($self->goto_code_line($txt)) {
         print "invalid text range\n";
         return if $txt eq "";
     }
