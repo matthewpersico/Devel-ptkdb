@@ -436,7 +436,7 @@ sub dbint_handler {
 # of DB::DB
 #
 sub Initialize {
-    my ($fName) = @_;
+    my ($fname) = @_;
     return if $DB::ptkdb::isInitialized;
     $DB::ptkdb::isInitialized = 1;
 
@@ -744,13 +744,13 @@ sub DB {
                     $r = $ptkdb_obj->insertExpr(
                         [$result[0]],
                         $ptkdb_obj->{'data_list'},
-                        $result[0], $ptkdb_obj->{'expr'}, $Devel::ptkdb::expr_depth
+                        $result[0], $ptkdb_obj->{'expr'}, $ptkdb_obj->{'expr_depth'}
                     );
                 } else {
                     $r = $ptkdb_obj->insertExpr(
                         [\@result],
                         $ptkdb_obj->{'data_list'},
-                        \@result, $ptkdb_obj->{'expr'}, $Devel::ptkdb::expr_depth
+                        \@result, $ptkdb_obj->{'expr'}, $ptkdb_obj->{'expr_depth'}
                     );
                 }
 
@@ -760,7 +760,7 @@ sub DB {
                 # next time through.
                 #
                 push @{ $ptkdb_obj->{'expr_list'} },
-                    { 'expr' => $ptkdb_obj->{'expr'}, 'depth' => $Devel::ptkdb::expr_depth }
+                    { 'expr' => $ptkdb_obj->{'expr'}, 'depth' => $$ptkdb_obj->{'expr_depth'} }
                     if $r;
 
                 next;

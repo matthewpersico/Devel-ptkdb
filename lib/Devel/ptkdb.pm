@@ -24,6 +24,7 @@ use Tk::Table;
 # ===========================================================================
 # Project modules
 use Devel::ptkdb::Cmd;
+use Devel::ptkdb::InitAPI;
 use Devel::ptkdb::State;
 
 # ===========================================================================
@@ -61,23 +62,27 @@ my $isWin32 = $^O eq 'MSWin32';
 # could cause a circular module inclusion issue.
 
 sub here {
+    my $level = ($_[0] // 0);
     # caller() doesn't cut it for what we want, which is effectively:
     #
     # (caller(0))[3], __FILE__, __LINE__
     #
-    # This is because caller() gives your the location from where this sub
-    # called, not where we are in this sub. And there is no way to use __FILE__
-    # and __LINE__ in a function because the are evalupated at compile
-    # time. So, we use two calls to caller.
+    # This is because caller() gives the location from where a sub called, not
+    # where we are in such a sub. And there is no way to use __FILE__ and
+    # __LINE__ in a function because the are evaluated at compile time; they
+    # would be the __FILE__ and __LINE__ of where they exist, not of any
+    # calling sub. Therefore, we use two calls to caller() to get what we want.
     #
-    # When caller is 0, we get where this function was called from, which is
-    # where the caller "is", and this function name, which we ignore.
+    # When caller is 0, we get where here() was called from, which is where the
+    # caller "is", and this function name of here(), which we ignore.
     #
-    # When caller is 1, we get the caller of this function.
+    # When caller is 1, we get the caller of here().
     #
-    # We default level to 0, which is useful for most purposes, but allow it to
-    # be specified so we can use it internally in our *say* functions.
-    my ($level) = ($_[0] // 0);
+    # That combination prints where in the code we put the here() call, by
+    # file, line and sub.
+    #
+    # We default level to 0, which is useful for most purposes, but allow it to be
+    # specified so we can use it internally in our *say* functions.
     my ($pkg, $file, $line, $d4)  = caller($level);
     my ($d1,  $d2,   $d3,   $sub) = caller($level + 1);
 
@@ -186,6 +191,17 @@ sub debug_say {
     }
 }
 
+sub obj {
+    return $_ptkdb_obj if defined $_ptkdb_obj;
+
+    return undef if $_ptkdb_obj_is_being_built;    ## no critic (Subroutines::ProhibitExplicitReturnUndef)
+
+    local $_ptkdb_obj_is_being_built = 1;
+    $_ptkdb_obj = __PACKAGE__->new;
+
+    return $_ptkdb_obj;
+}
+
 # ===========================================================================
 # Object instance methods
 
@@ -197,6 +213,9 @@ sub new {
 
     # Handles .ptkdb file saves and loads.
     $self->{state_manager} = Devel::ptkdb::State->new(ptkdb_obj => $self);
+    $self->{script_name}   = $0;
+    $self->{script_args}   = [@ARGV];                                        # copy args
+    $self->{expr_depth}    = -1;
 
     # ===================================================================
     # Below here is code that existed in this function prior to the
@@ -332,9 +351,7 @@ sub error_dialog {
 
     return;
 }
-#
-# Constructor for our Devel::ptkdb
-#
+
 sub make_file_save_name {
     my ($self, $filename) = @_;
 
@@ -352,21 +369,11 @@ sub save_state_file {
     return $self->{state_manager}->save_state_file(@args);
 }
 
-sub obj {
-    return $_ptkdb_obj if defined $_ptkdb_obj;
-
-    return undef if $_ptkdb_obj_is_being_built;    ## no critic (Subroutines::ProhibitExplicitReturnUndef)
-
-    local $_ptkdb_obj_is_being_built = 1;
-    $_ptkdb_obj = __PACKAGE__->new;
-
-    return $_ptkdb_obj;
-}
-
 # =========================================================================
 # Below here is code that existed prior to the re-architecting of
 # 2026/June. Any function that can be used will be hoisted up above.
 
+### Object static
 sub BEGIN {
     {
         no warnings 'once';
@@ -427,7 +434,7 @@ sub BEGIN {
     # an element is a ref   back to the array or a root of the array
     # you could hang the debugger by making it recursively evaluate an expression
     #
-    $Devel::ptkdb::expr_depth     = -1;
+
     $Devel::ptkdb::add_expr_depth = 1;    # how much further to expand an expression when clicked
 
     $Devel::ptkdb::linenumber_format = $ENV{'PTKDB_LINENUMBER_FORMAT'} || "%05d ";
@@ -454,6 +461,7 @@ sub BEGIN {
 }
 
 sub DoBugReport {
+    my $self       = shift;
     my ($str)      = 'sourceforge.net/tracker/?atid=437609&group_id=43854&func=browse';
     my (@browsers) = qw/netscape mozilla/;
     my ($fh, $pid, $sh);
@@ -483,150 +491,20 @@ sub DoBugReport {
 }
 
 #
-# Subroutine provided to the user for initializing files in '.ptkdbrc'
-#
-sub brkpt {
-    my ($fname, @idx) = @_;
-
-    my $offset    = DB::debugger_injected_line_offset($fname);
-    my $ptkdb_obj = Devel::ptkdb::obj();
-
-    for (@idx) {
-        if (!&DB::is_line_breakable($fname, $_ + $offset)) {
-            my ($package, $filename, $line) = caller;
-            print "$filename:$line:  $fname line $_ is not breakable\n";
-            next;
-        }
-        $ptkdb_obj->insertBreakpoint($fname, $_, 1);    # insert a simple breakpoint
-    }
-}
-
-#
-# Set conditional breakpoint(s)
-#
-sub condbrkpt {
-    my ($fname)   = shift;
-    my $offset    = DB::debugger_injected_line_offset($fname);
-    my $ptkdb_obj = Devel::ptkdb::obj();
-
-    while (@_) {    # arg loop
-        my ($index, $expr) = splice @_, 0, 2;    # take args 2 at a time
-
-        if (!&DB::is_line_breakable($fname, $index + $offset)) {
-            my ($package, $filename, $line) = caller;
-            print "$filename:$line:  $fname line $index is not breakable\n";
-            next;
-        }
-        $ptkdb_obj->insertBreakpoint($fname, $index, 1, $expr);    # insert a simple breakpoint
-    }
-
-}
-
-sub brkonsub {
-    my (@names) = @_;
-    my $ptkdb_obj = Devel::ptkdb::obj();
-
-    for (@names) {
-
-        # get the filename and line number range of the target subroutine
-
-        if (!exists $DB::sub{$_}) {
-            print "No subroutine $_.  Try main::$_\n";
-            next;
-        }
-
-        $DB::sub{$_} =~ /(.*):([0-9]+)-([0-9]+)$/o;    # file name will be in $1, start line $2, end line $3
-
-        for ($2 .. $3) {
-            next unless &DB::is_line_breakable($1, $_);
-            $ptkdb_obj->insertBreakpoint($1, $_, 1);
-            last;                                      # only need the one breakpoint
-        }
-    }
-
-}
-
-#
-# set breakpoints on subroutines matching a regular
-# expression
-#
-sub brkonsub_regex {
-    my (@regexps) = @_;
-    my @subList;
-
-    #
-    # accumulate matching subroutines
-    #
-    for my $regexp (@regexps) {
-        study $regexp;
-        push @subList, grep /$regexp/, keys %DB::sub;
-    }
-
-    brkonsub(@subList);    # set breakpoints on matching subroutines
-
-}
-
-#
-# Allow the user Access to our tag configurations
-#
-sub textTagConfigure {
-    my ($tag, @config) = @_;
-    my $ptkdb_obj = Devel::ptkdb::obj();
-
-    $ptkdb_obj->{'text'}->tagConfigure($tag, @config);
-
-}
-
-#
-# Change the tabs in the text field
-#
-sub setTabs {
-    my $ptkdb_obj = Devel::ptkdb::obj();
-
-    $ptkdb_obj->{'text'}->configure(-tabs => [@_]);
-
-}
-
-#
-# User .ptkdbrc API
-# allows the user to add expressions to
-# the expression list window.
-#
-sub add_exprs {
-    my $ptkdb_obj = Devel::ptkdb::obj();
-    push @{ $ptkdb_obj->{'expr_list'} },
-        map { 'expr' => $_, 'depth' => $Devel::ptkdb::expr_depth }, @_;
-}
-
-#
-# register a subroutine reference that will be called whenever
-# ptkdb sets up it's windows
-#
-sub register_user_window_init {
-    my $ptkdb_obj = Devel::ptkdb::obj();
-    push @{ $ptkdb_obj->{'user_window_init_list'} }, @_;
-}
-
-#
-# register a subroutine reference that will be called whenever
-# ptkdb enters from code
-#
-sub register_user_DB_entry {
-    my $ptkdb_obj = Devel::ptkdb::obj();
-    push @{ $ptkdb_obj->{'user_window_DB_entry_list'} }, @_;
-}
-
-sub get_notebook_widget {
-    my $ptkdb_obj = Devel::ptkdb::obj();
-    return $ptkdb_obj->{'notebook'};
-}
-
-#
 # Run files provided by the user
 #
 sub do_user_init_files {
-    use vars qw($dbg_window);
-    local $dbg_window = shift;
+    my ($self) = @_;
+
+    debug_say(
+        msg    => 'in Initialize, after db_user_init_files()',
+        action => 'trace',
+        dump   => [
+            {   descr => '$_ptkdb_obj',
+                ref   => $self
+            }
+        ]
+    );
 
     eval { do "$Config{'installprivlib'}/Devel/ptkdbrc"; }
         if -e "$Config{'installprivlib'}/Devel/ptkdbrc";
@@ -818,14 +696,14 @@ sub DoOpen {
 }
 
 sub do_tabs {
+    my $self = shift;
     my ($tabs_str);
     my ($w, $result, $tabs_cfg);
     require Tk::Dialog;
 
-    my $ptkdb_obj = Devel::ptkdb::obj();
-    $w = $ptkdb_obj->{'main_window'}->DialogBox(-title => "Tabs", -buttons => [qw/Okay Cancel/]);
+    $w = $self->{'main_window'}->DialogBox(-title => "Tabs", -buttons => [qw/Okay Cancel/]);
 
-    $tabs_cfg = $ptkdb_obj->{'text'}->cget(-tabs);
+    $tabs_cfg = $self->{'text'}->cget(-tabs);
 
     $tabs_str = join " ", @$tabs_cfg if $tabs_cfg;
 
@@ -837,7 +715,7 @@ sub do_tabs {
 
     return unless $result eq 'Okay';
 
-    $ptkdb_obj->{'text'}->configure(-tabs => [split /\s/, $tabs_str]);
+    $self->{'text'}->configure(-tabs => [split /\s/, $tabs_str]);
 }
 
 sub close_ptkdb_window {
@@ -862,7 +740,7 @@ sub setup_menu_bar_item_file {
 
     my $items = [
         ['command' => 'About...',      -command => sub { $self->DoAbout(); }],
-        ['command' => 'Bug Report...', -command => \&DoBugReport],
+        ['command' => 'Bug Report...', -command => sub { self->DoBugReport(); }],
         "-",
 
         [   'command'    => 'Open',
@@ -893,20 +771,20 @@ sub setup_menu_bar_item_file {
             -command     => sub { $self->FindText(); }
         ],
 
-        ['command' => "Tabs...", -command => \&do_tabs],
+        ['command' => "Tabs...", -command => sub { $self->do_tabs(); }],
 
         "-",
 
         [   'command'    => 'Close Window and Run',
             -accelerator => 'Alt+W',
             -underline   => 6,
-            -command     => sub { $self->close_ptkdb_window; }
+            -command     => sub { $self->close_ptkdb_window(); }
         ],
 
         [   'command'    => 'Quit...',
             -accelerator => 'Alt+Q',
             -underline   => 0,
-            -command     => sub { $self->DoQuit }
+            -command     => sub { $self->DoQuit(); }
         ]
     ];
 
@@ -1430,7 +1308,7 @@ sub expr_expand {
 }
 
 sub line_number_from_coord {
-    my ($txtWidget, $coord) = @_;
+    my ($self, $txtWidget, $coord) = @_;
     my ($index);
 
     $index = $txtWidget->index($coord);
@@ -1448,16 +1326,15 @@ sub line_number_from_coord {
 
 }
 
-#
-# It may seem as if $txtWidget and $self are
-# erroneously reversed, but this is a result
-# of the calling syntax of the text-bind callback.
-#
+# =============================================================================
+# In the following breakpoint functions, $txtWidget and $self are NOT
+# erroneously reversed; this is a result of the calling syntax of the text-bind
+# callback. DO NOT SWAP THEM!
 sub set_breakpoint_tag {
     my ($txtWidget, $self, $coord, $value) = @_;
     my ($idx);
 
-    $idx = line_number_from_coord($txtWidget, $coord);
+    $idx = $self->line_number_from_coord($txtWidget, $coord);
 
     $self->insertBreakpoint($self->{'current_file'}, $idx, $value);
 
@@ -1467,7 +1344,7 @@ sub clear_breakpoint_tag {
     my ($txtWidget, $self, $coord) = @_;
     my ($idx);
 
-    $idx = line_number_from_coord($txtWidget, $coord);
+    $idx = $self->line_number_from_coord($txtWidget, $coord);
 
     $self->removeBreakpoint($self->{'current_file'}, $idx);
 
@@ -1477,7 +1354,7 @@ sub change_breakpoint_tag {
     my ($txtWidget, $self, $coord, $value) = @_;
     my ($idx, $brkpt, @tagSet);
 
-    $idx = line_number_from_coord($txtWidget, $coord);
+    $idx = $self->line_number_from_coord($txtWidget, $coord);
 
     #
     # Change the value of the breakpoint
@@ -3141,7 +3018,7 @@ sub retrieve_text_expr {
 
     my ($idx, $col, $data, $offset);
 
-    ($col, $idx) = line_number_from_coord($txt, $coord);
+    ($col, $idx) = $self->line_number_from_coord($txt, $coord);
 
     $offset = $Devel::ptkdb::linenumber_length + 1;    # line number text + 1 space
 
@@ -3226,12 +3103,6 @@ sub LeaveActions {
     #  $self->{'main_window'}->Busy() ;
 }
 
-sub BEGIN {
-    $Devel::ptkdb::scriptName  = $0;
-    @Devel::ptkdb::script_args = @ARGV;    # copy args
-
-}
-
 #
 # Save the ptkdb state file and restart the debugger
 #
@@ -3253,8 +3124,8 @@ sub DoRestart {
     #
     # build up the command to do the restart
     #
-
-    $fname = "perl -w -d:ptkdb $Devel::ptkdb::scriptName @Devel::ptkdb::script_args";
+    my $ptkdb_obj = obj();
+    $fname = "perl -w -d:ptkdb $ptkdb_obj->{script_name} @{$ptkdb_obj->{script_args}}";
 
     # print "$$ doing a restart with $fname\n" ;
 
