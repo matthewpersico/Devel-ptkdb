@@ -20,15 +20,6 @@ $ptkdb_state = {
                  'files' => {
                               'regression/issue-3/test.pl' => [
                                                                 {
-                                                                  'text' => 'my $h     = { 43, 23 };
-',
-                                                                  'value' => '1',
-                                                                  'fname' => 'regression/issue-3/test.pl',
-                                                                  'expr' => undef,
-                                                                  'line' => 10,
-                                                                  'type' => 'user'
-                                                                },
-                                                                {
                                                                   'value' => '1',
                                                                   'text' => 'my %h     = (
 ',

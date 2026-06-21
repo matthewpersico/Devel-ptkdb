@@ -1,0 +1,1 @@
+brkpt('regression/issue-3/test.pl', 10);
