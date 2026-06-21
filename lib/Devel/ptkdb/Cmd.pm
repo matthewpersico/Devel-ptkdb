@@ -1,74 +1,104 @@
 package Devel::ptkdb::Cmd;
 
+# ===========================================================================
+# Pragmas
 use strict;
 use warnings;
 
+# ===========================================================================
+# Core and CPAN modules
+# None
+
+# ===========================================================================
+# Project modules
+# None
+
+# ===========================================================================
+# Shareable package data
+# None
+
+# ===========================================================================
+# Package data
+my @execute_msg = (
+    "Currently supported commands are:",
+    "h   - pop up this dialog",
+    "n   - step over line",
+    "s   - step into line",
+    "r   - return",
+    "c   - continue",
+    "l # - goto line # in current code",
+    "q   - quit"
+);
+
+# ===========================================================================
+# Object static methods
 sub new {
     my ($class, %args) = @_;
 
-    die "window is required" unless $args{window};
+    die "ptkdb_obj is required" unless $args{ptkdb_obj};
 
     return bless {
-        window => $args{window},
+        ptkdb_obj => $args{ptkdb_obj},
     }, $class;
 }
 
+# ===========================================================================
+# Object instance methods
 sub execute {
     my ($self, $command) = @_;
 
     $command //= '';
     $command =~ s/^\s+|\s+$//g;
 
-    my $window = $self->{window};
+    my $ptkdb_obj = $self->{ptkdb_obj};
 
     my @last;
-    push @last, $window->{command_line_last} if $window->{command_line_last};
+    push @last, $ptkdb_obj->{command_line_last} if $ptkdb_obj->{command_line_last};
     push @last, $command;
     my $retval = '<no command>';
-    ## Try to keep these in most to least likely to be used order.
+
+    # Try to keep these in most to least likely to be used order.
     if ($command eq '') {
-        if ($window->{command_line_last}) {
-            $command = $window->{command_line_last};
+        if ($ptkdb_obj->{command_line_last}) {
+            $command = $ptkdb_obj->{command_line_last};
         } else {
-            $window->do_alert(
-                -title => 'Debugger Command Line Error',
-                -msg   => [
-                    "No command entered. Currently supported commands are:",
-                    "n   - step over line",
-                    "s   - step into line",
-                    "r   - return",
-                    "c   - continue",
-                    "l # - goto line # in current code",
-                    "q   - quit"
-                ]
+            $ptkdb_obj->do_alert(
+                title => 'Debugger Command Line Error',
+                msg   => ['No command entered.', @execute_msg]
             );
             return;
         }
     }
 
     if ($command eq 'n') {
-        $retval = $window->{shared_callbacks}->{stepOverSub}->();
+        $retval = $ptkdb_obj->{shared_callbacks}->{stepOverSub}->();
     } elsif ($command eq 's') {
-        $retval = $window->{shared_callbacks}->{stepInSub}->();
+        $retval = $ptkdb_obj->{shared_callbacks}->{stepInSub}->();
     } elsif ($command eq 'c') {
-        $retval = $window->{shared_callbacks}->{runSub}->();
+        $retval = $ptkdb_obj->{shared_callbacks}->{runSub}->();
     } elsif ($command eq 'r') {
-        $retval = $window->{shared_callbacks}->{returnSub}->();
+        $retval = $ptkdb_obj->{shared_callbacks}->{returnSub}->();
     } elsif ($command eq 'q') {
-        $retval = $window->{shared_callbacks}->{quitSub}->();
+        $retval = $ptkdb_obj->{shared_callbacks}->{quitSub}->();
+    } elsif ($command eq 'h') {
+        $ptkdb_obj->do_alert(
+            title => 'Debugger Command Line Help',
+            msg   => \@execute_msg
+        );
+        return;
     } elsif ($command =~ /^l\s+(\d+)$/) {
-        $retval = $window->goto_code_line($1);
+        $retval = $ptkdb_obj->goto_code_line($1);
     }
 
-    if ($retval eq '<no command>') {
-        $window->do_alert(
-            -title => 'Debugger Command Line Error',
-            -msg   => "Unknown debugger command: $command"
+    if ($retval && $retval eq '<no command>') {
+        $ptkdb_obj->do_alert(
+            title => 'Ptkdb_Obj Command Line Error',
+            msg   => ["Unknown ptkdb_obj command: $command", @execute_msg]
         );
         return;
     } else {
-        $window->{command_line_last} = $command;
-        return;
+        $ptkdb_obj->{command_line_last} = $command;
+        return $retval;
     }
 }
 

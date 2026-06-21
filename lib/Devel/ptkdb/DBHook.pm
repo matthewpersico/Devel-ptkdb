@@ -1,53 +1,40 @@
 ## no critic (Modules::RequireFilenameMatchesPackage)
 package DB;
 
+# ===========================================================================
 # Pragmas
 use strict;
 use warnings;
 
+# ===========================================================================
 # Core and CPAN modules
 use Carp;
 
+# ===========================================================================
 # Project modules
-## None
+# None
 
-# Package Data
+# ===========================================================================
+# Shareable package data
+# None
+
+# ===========================================================================
+# Package data
 my %PD = (
     brkpt_search_line_count => 20,
-    brkpt_fixed_msg         => [],
 );
 
-## ===========================================================================
-## Useful aliases
+# ===========================================================================
+# Package functions
 
-sub ddn {
-    goto &Data::Dumper::new;
-}
-
-sub ddd {
-    goto &Data::Dumper::Dump;
-}
-
-## ===========================================================================
-## Devel::ptkdb access
-sub console_say {
-    goto &Devel::ptkdb::console_say;
-}
-
-sub console_string {
-    goto &Devel::ptkdb::console_string;
-}
-
+# ===========================================================================
+# Devel::ptkdb access
 sub debug_say {
     goto &Devel::ptkdb::debug_say;
 }
 
-sub debug_dump {
-    goto &Devel::ptkdb::debug_dump;
-}
-
-## ===========================================================================
-## dbline handlers
+# ===========================================================================
+# dbline handlers
 sub _dbline_key {
     my ($fname) = @_;
     return unless defined $fname && length $fname;
@@ -90,15 +77,14 @@ sub debugger_injected_line_offset {
     my $lines = _dbline_array($fname);
     return 0 unless $lines;
 
-    ## Yes, we are checking for the debugger injecting itself on the first line
-    ## of the code, which is typically the zeroth [0] element.  But not in the
-    ## debugger. Apparently the zeroth element of *dbline goes
-    ## unused. <facepalm>.
+    # Yes, we are checking for the debugger injecting itself on the first line
+    # of the code, which is typically the zeroth [0] element.  But not in the
+    # debugger. Apparently the zeroth element of *dbline goes unused <facepalm>.
     my $diio = defined $lines->[1] && $lines->[1] =~ /use\s+.*Devel::_?ptkdb/ ? 1 : 0;
     if ($diio) {
         debug_say(
             msg    => "Offset adjusted!",
-            action => 'trace'
+            action => 'trace',
         );
     }
     return $diio;
@@ -198,8 +184,8 @@ sub get_breakpoint_indexes {
     return keys %{$breakpoints};
 }
 
-## ===========================================================================
-## breakpoint handlers
+# ===========================================================================
+# breakpoint handlers
 
 # When we restore breakpoints from a state file, they've often 'moved' because
 # the file has been editted. We try to restore to the original position as
@@ -230,25 +216,10 @@ sub fix_breakpoints {
     my (@retList);
 
     $nLines = @{ $args{lines} };
-    $PD{brkpt_fixed_msg} = [];
+    my @brkpt_fixed_msg;
     BREAKPOINTS:
     foreach my $brkpt (@{ $args{brkpts} }) {
         $found = 0;
-
-        debug_dump(
-            action => 'skip',
-            dump   => [
-                {   descr => '$brkpt->{text}',
-                    ref   => $brkpt->{text}
-                },
-                {   descr => '$brkpt->{line}',
-                    ref   => $brkpt->{line},
-                },
-                {   descr => '$args{lines}->[$brkpt->{line}]',
-                    ref   => $args{lines}->[$brkpt->{line}]
-                },
-            ]
-        );
 
         # We compare code lines sans whitespace to help match in the face of
         # perl tidying.
@@ -257,8 +228,8 @@ sub fix_breakpoints {
             $code_text = $args{lines}->[$brkpt->{line}];
             $code_text =~ s/\s+//g;
         }
-        my $brkpt_text = $brkpt->{text};
-        $brkpt->{text} =~ s/\s+//g;
+        my $brkpt_text = $brkpt->{text} // q{};
+        $brkpt_text =~ s/\s+//g;
         if ($brkpt_text eq $code_text) {
             $found = 1;
             push @retList, $brkpt;
@@ -274,31 +245,13 @@ sub fix_breakpoints {
             $endLine   = $nLines - 1 if $endLine > $nLines;
             $pivot     = int(($endLine - $startLine) / 2);
 
-            debug_dump(
-                action => 'skip',
-                dump   => [
-                    {   descr => 'startLine',
-                        ref   => $startLine
-                    },
-                    {   descr => 'endLine',
-                        ref   => $endLine
-                    },
-                    {   descr => '$brkpt->{line}',
-                        ref   => $brkpt->{line}
-                    },
-                    {   descr => '$pivot',
-                        ref   => $pivot
-                    },
-                ]
-            );
             NEARBY_SEARCH:
             for ((reverse $startLine .. $pivot), $pivot + 1 .. $endLine) {
                 $code_text = $args{lines}->[$_];
                 $code_text =~ s/\s+//g;
-                $brkpt_text = $brkpt->{text};
-                $brkpt->{text} =~ s/\s+//g;
+                my ($pkg, $file, $line, $sub) = caller(0);
                 next unless $brkpt_text eq $code_text;
-                push @{ $PD{brkpt_fixed_msg} },
+                push @brkpt_fixed_msg,
                     (
                     "Breakpoint $args{fname} (line $brkpt->{line}) was moved",
                     " to line $_ because the statement moved.",
@@ -319,7 +272,7 @@ sub fix_breakpoints {
                     my ($from, $to) = ($brkpt->{text}, $args{lines}->[$brkpt_line]);
                     chomp $from;
                     chomp $to;
-                    push @{ $args{brkpt_fixed_msg} },
+                    push @brkpt_fixed_msg,
                         (
                         "Breakpoint $args{fname} (line $brkpt->{line}) was moved",
                         " from [$from]",
@@ -340,7 +293,7 @@ sub fix_breakpoints {
         if (not $found) {
             my $text = $brkpt->{text};
             chomp $text;
-            push @{ $args{brkpt_fixed_msg} },
+            push @brkpt_fixed_msg,
                 (
                 "Breakpoint $args{fname} (line $brkpt->{line})",
                 " for statement [$text]",
@@ -349,7 +302,11 @@ sub fix_breakpoints {
                 );
         }
     }
-    scalar(@{ $PD{brkpt_fixed_msg} }) && console_say($PD{brkpt_fixed_msg});
+    scalar(@brkpt_fixed_msg) && Devel::ptkdb::obj()->do_alert(
+        title => 'Breakpoint Load',
+        msg   => \@brkpt_fixed_msg
+    );
+
     return @retList;
 }
 
@@ -387,16 +344,7 @@ sub restore_breakpoints_from_save {
     # $fname is the code where breakpoints are set and $list is the list of
     # breakpoints in that code.
     while (my ($fname, $list) = each %{$brkpt_list}) {
-        my $lines = _dbline_array($fname);
-        debug_dump(
-            action => 'skip',
-            msg    => 'Checking for adjusting the offset from 0 to 1.',
-            dump   => [
-                {   descr => "\$lines of $fname",
-                    ref   => $lines
-                }
-            ]
-        );
+        my $lines       = _dbline_array($fname);
         my $breakpoints = _dbline_hash($fname);
         next unless $lines && $breakpoints;
 
@@ -408,10 +356,12 @@ sub restore_breakpoints_from_save {
             brkpts => $list,
             lines  => $lines
         );
-
         for my $brkpt (@newList) {
             if (!DB::is_line_breakable($fname, $brkpt->{line} + $offset)) {
-                console_say("Breakpoint $fname:$brkpt->{line} in config file is not breakable.");
+                Devel::ptkdb::obj()->do_alert(
+                    title => 'Breakpoint Restore',
+                    msg   => "Breakpoint $fname:$brkpt->{line} in config file is not breakable."
+                );
                 next;
             }
             $breakpoints->{ $brkpt->{line} } = { %{$brkpt} };
@@ -421,8 +371,8 @@ sub restore_breakpoints_from_save {
     return;
 }
 
-## ===========================================================================
-## state handlers
+# ===========================================================================
+# state handlers
 sub breakpoint_state {
     return DB::breakpoints_to_save();
 }
@@ -445,29 +395,29 @@ sub restore_breakpoint_state {
 # package eval would turn up an undef result.
 sub updateExprs {
     my ($package) = @_;
-    my $window = Devel::ptkdb::window();
+    my $ptkdb_obj = Devel::ptkdb::obj();
 
     #
     # Update expressions
     #
-    $window->deleteAllExprs();
+    $ptkdb_obj->deleteAllExprs();
     my (@result);
 
-    for my $expr (@{ $window->{'expr_list'} }) {
+    for my $expr (@{ $ptkdb_obj->{'expr_list'} }) {
         next if length $expr == 0;
 
         @result = &DB::dbeval($package, $expr->{'expr'});
 
         if (@result == 1) {
-            $window->insertExpr(
+            $ptkdb_obj->insertExpr(
                 [$result[0]],
-                $window->{'data_list'},
+                $ptkdb_obj->{'data_list'},
                 $result[0], $expr->{'expr'}, $expr->{'depth'}
             );
         } else {
-            $window->insertExpr(
+            $ptkdb_obj->insertExpr(
                 [\@result],
-                $window->{'data_list'},
+                $ptkdb_obj->{'data_list'},
                 \@result, $expr->{'expr'}, $expr->{'depth'}
             );
         }
@@ -490,10 +440,10 @@ sub Initialize {
     return if $DB::ptkdb::isInitialized;
     $DB::ptkdb::isInitialized = 1;
 
-    my $window = Devel::ptkdb::window();
-    return unless defined $window;
+    my $ptkdb_obj = Devel::ptkdb::obj();
+    return unless defined $ptkdb_obj;
 
-    $window->do_user_init_files();
+    $ptkdb_obj->do_user_init_files();
 
     $DB::dbint_handler_save = $SIG{'INT'}         unless $DB::sigint_disable;    # saves the old handler
     $SIG{'INT'}             = "DB::dbint_handler" unless $DB::sigint_disable;
@@ -506,25 +456,25 @@ sub Initialize {
         # Restore expressions and breakpoints in state file
         #
         print "restoring state from $ENV{'PTKDB_RESTART_STATE_FILE'}\n";
-        $window->restore_state_file($ENV{'PTKDB_RESTART_STATE_FILE'});
+        $ptkdb_obj->restore_state_file($ENV{'PTKDB_RESTART_STATE_FILE'});
         unlink $ENV{'PTKDB_RESTART_STATE_FILE'};    # delete state file
         $ENV{'PTKDB_RESTART_STATE_FILE'} = "";      # clear entry
     } else {
-        $window->restore_state_file();              # look for a default based on $0
+        $ptkdb_obj->restore_state_file();           # look for a default based on $0
     }
 
 }
 
 sub restoreState {
     my ($fname) = @_;
-    my $window = Devel::ptkdb::window();
-    return $window->restore_state_file($fname);
+    my $ptkdb_obj = Devel::ptkdb::obj();
+    return $ptkdb_obj->restore_state_file($fname);
 }
 
 sub save_state_file {
     my ($fname) = @_;
-    my $window = Devel::ptkdb::window();
-    return $window->save_state_file($fname);
+    my $ptkdb_obj = Devel::ptkdb::obj();
+    return $ptkdb_obj->save_state_file($fname);
 }
 
 sub SetStepOverBreakPoint {
@@ -592,9 +542,9 @@ sub breakPointEvalExpr {
     @result = &DB::dbeval($package, $brkpt->{'expr'});
 
     use strict;
-    my $window = Devel::ptkdb::window();
+    my $ptkdb_obj = Devel::ptkdb::obj();
 
-    $window->DoAlert($@) if $@;
+    $ptkdb_obj->do_alert(msg => $@) if $@;
 
     return ($result[0] or @result);    # we could have a case where the 1st
                                        # element is undefined but subsequent
@@ -682,15 +632,15 @@ sub DB {
             return;
         }
 
-        my $window = Devel::ptkdb::window();
-        if (!$window) {    # not setup yet
+        my $ptkdb_obj = Devel::ptkdb::obj();
+        if (!$ptkdb_obj) {    # not setup yet
             $@ = $DB::save_err;
             return;
         }
 
-        $window->setup_main_window() unless $window->{'main_window'};
+        $ptkdb_obj->setup_main_window() unless $ptkdb_obj->{'main_window'};
 
-        $window->EnterActions();
+        $ptkdb_obj->EnterActions();
 
         my ($saveP);
         $saveP = $^P;
@@ -715,10 +665,10 @@ sub DB {
             $SIG{'INT'} = "DB::dbexit" unless $DB::dbint_handler_save;
         }
 
-        #$window->{main_window}->raise() ; # bring us to the top make sure OUR event loop runs
-        $window->{main_window}->focus();
+        #$ptkdb_obj->{main_window}->raise() ; # bring us to the top make sure OUR event loop runs
+        $ptkdb_obj->{main_window}->focus();
 
-        $window->set_file($filename, $line);
+        $ptkdb_obj->set_file($filename, $line);
         #
         # Refresh the exprs to see if anything has changed
         #
@@ -728,16 +678,16 @@ sub DB {
         # Update subs Page if necessary
         #
         $cnt = scalar keys %DB::sub;
-        if ($cnt != $window->{'subs_list_cnt'} && $window->{'subs_page_activated'}) {
-            $window->fill_subs_page();
-            $window->{'subs_list_cnt'} = $cnt;
+        if ($cnt != $ptkdb_obj->{'subs_list_cnt'} && $ptkdb_obj->{'subs_page_activated'}) {
+            $ptkdb_obj->fill_subs_page();
+            $ptkdb_obj->{'subs_list_cnt'} = $cnt;
         }
         #
         # Update the subroutine stack menu
         #
-        $window->refresh_stack_menu();
+        $ptkdb_obj->refresh_stack_menu();
 
-        $window->{run_flag} = 1;
+        $ptkdb_obj->{run_flag} = 1;
 
         my ($evt, @result, $r);
 
@@ -745,35 +695,35 @@ sub DB {
             #
             # we wait here for something to do
             #
-            $evt = $window->main_loop();
+            $evt = $ptkdb_obj->main_loop();
 
             last if ($evt eq 'step');
 
             $DB::single = 0 if ($evt eq 'run');
 
             if ($evt eq 'balloon_eval') {
-                $window->code_motion_eval(&DB::dbeval($package, $window->{'balloon_expr'}));
+                $ptkdb_obj->code_motion_eval(&DB::dbeval($package, $ptkdb_obj->{'balloon_expr'}));
                 next;
             }
 
             if ($evt eq 'qexpr') {
                 my $str;
-                @result = &DB::dbeval($package, $window->{'qexpr'});
-                $window->{'quick_entry'}->delete(0, 'end');    # clear old text
-                if (exists $window->{'quick_dumper'}) {
-                    $window->{'quick_dumper'}->Reset();
-                    $window->{'quick_dumper'}->Values([$#result == 0 ? @result : \@result]);
-                    if ($window->{'quick_dumper'}->can('Dumpxs')) {
-                        $str = $window->{'quick_dumper'}->Dumpxs();
+                @result = &DB::dbeval($package, $ptkdb_obj->{'qexpr'});
+                $ptkdb_obj->{'quick_entry'}->delete(0, 'end');    # clear old text
+                if (exists $ptkdb_obj->{'quick_dumper'}) {
+                    $ptkdb_obj->{'quick_dumper'}->Reset();
+                    $ptkdb_obj->{'quick_dumper'}->Values([$#result == 0 ? @result : \@result]);
+                    if ($ptkdb_obj->{'quick_dumper'}->can('Dumpxs')) {
+                        $str = $ptkdb_obj->{'quick_dumper'}->Dumpxs();
                     } else {
-                        $str = $window->{'quick_dumper'}->Dump();
+                        $str = $ptkdb_obj->{'quick_dumper'}->Dump();
                     }
                 } else {
                     $str = "@result";
                 }
-                $window->{'quick_entry'}->insert(0, $str);             #enter the text
-                $window->{'quick_entry'}->selectionRange(0, 'end');    # select it
-                $evt = 'update';                                       # force an update on the expressions
+                $ptkdb_obj->{'quick_entry'}->insert(0, $str);             #enter the text
+                $ptkdb_obj->{'quick_entry'}->selectionRange(0, 'end');    # select it
+                $evt = 'update';                                          # force an update on the expressions
             }
 
             if ($evt eq 'expr') {
@@ -783,24 +733,24 @@ sub DB {
                 # already have it.
                 #
 
-                if (grep $_->{'expr'} eq $window->{'expr'}, @{ $window->{'expr_list'} }) {
-                    $window->DoAlert("$window->{'expr'} is already listed");
+                if (grep $_->{'expr'} eq $ptkdb_obj->{'expr'}, @{ $ptkdb_obj->{'expr_list'} }) {
+                    $ptkdb_obj->do_alert(msg => "$ptkdb_obj->{'expr'} is already listed");
                     next;
                 }
 
-                @result = &DB::dbeval($package, $window->{expr});
+                @result = &DB::dbeval($package, $ptkdb_obj->{expr});
 
                 if (@result == 1) {
-                    $r = $window->insertExpr(
+                    $r = $ptkdb_obj->insertExpr(
                         [$result[0]],
-                        $window->{'data_list'},
-                        $result[0], $window->{'expr'}, $Devel::ptkdb::expr_depth
+                        $ptkdb_obj->{'data_list'},
+                        $result[0], $ptkdb_obj->{'expr'}, $Devel::ptkdb::expr_depth
                     );
                 } else {
-                    $r = $window->insertExpr(
+                    $r = $ptkdb_obj->insertExpr(
                         [\@result],
-                        $window->{'data_list'},
-                        \@result, $window->{'expr'}, $Devel::ptkdb::expr_depth
+                        $ptkdb_obj->{'data_list'},
+                        \@result, $ptkdb_obj->{'expr'}, $Devel::ptkdb::expr_depth
                     );
                 }
 
@@ -809,8 +759,8 @@ sub DB {
                 # and it if wasn't added sucessfully it won't be reevalled the
                 # next time through.
                 #
-                push @{ $window->{'expr_list'} },
-                    { 'expr' => $window->{'expr'}, 'depth' => $Devel::ptkdb::expr_depth }
+                push @{ $ptkdb_obj->{'expr_list'} },
+                    { 'expr' => $ptkdb_obj->{'expr'}, 'depth' => $Devel::ptkdb::expr_depth }
                     if $r;
 
                 next;
@@ -823,10 +773,10 @@ sub DB {
                 #
                 # Reevaluate the contents of the expression eval window
                 #
-                my $txt    = $window->{'eval_text'}->get('0.0', 'end');
+                my $txt    = $ptkdb_obj->{'eval_text'}->get('0.0', 'end');
                 my @result = &DB::dbeval($package, $txt);
 
-                $window->updateEvalWindow(@result);
+                $ptkdb_obj->updateEvalWindow(@result);
 
                 next;
             }
@@ -835,7 +785,7 @@ sub DB {
         $^P = $saveP;
         $SIG{'INT'} = "DB::dbint_handler" unless $DB::sigint_disable;    # set our signal handler
 
-        $window->LeaveActions();
+        $ptkdb_obj->LeaveActions();
 
         $@      = $DB::save_err;
         $DB::on = 0;

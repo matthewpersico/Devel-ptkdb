@@ -47,7 +47,7 @@ unlink @tidy_files;
 my $argv = join(
     ' ',
     "--pro=$FindBin::Bin/../.perltidyrc", '--assert-tidy',
-    '-nst',    ## Turns off the -st in -pbp in perltidyrc
+    '-nst',    # Turns off the -st in -pbp in perltidyrc
     @perl_files
 );
 if (is(Perl::Tidy::perltidy(argv => $argv), 0, "tidy")) {

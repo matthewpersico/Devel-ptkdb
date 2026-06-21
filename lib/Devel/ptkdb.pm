@@ -1,11 +1,12 @@
 package Devel::ptkdb;
 
+# ===========================================================================
+# Pragmas
 use strict;
 use warnings;
 
-#
-# CPAN modules
-#
+# ===========================================================================
+# Core and CPAN modules
 use Carp qw(cluck carp confess longmess);
 use Config;
 use Cwd qw(realpath);
@@ -20,25 +21,36 @@ use Tk::NoteBook;
 use Tk::HList;
 use Tk::Table;
 
-#
-# Package modules
-#
+# ===========================================================================
+# Project modules
 use Devel::ptkdb::Cmd;
 use Devel::ptkdb::State;
 
-#
-# Data
-#
+# ===========================================================================
+# Shareable package data
 
-our $window;
-our $window_is_being_built = 0;
-
-my $isWin32 = $^O eq 'MSWin32';
+# We store the debugger object from new() here. Other packages will need to
+# access it, but if we start using this module in other modules, we end up ion
+# curcular dependncy hell. So, after we create and store it here, other modules
+# can access it via Deve::ptkdb::ptkdb_obj() accessor function.
 our $VERSION = "2.0.0";
 
-# We define console_say, debug_say and debug_dump here so they can be used in
-# BEGIN. If you want to use them in other Devel::ptkdb modules, then define
-# subs in those modules like this:
+# ===========================================================================
+# Package data
+my $_ptkdb_obj;                        # Storage for the ptkdb object for
+                                       # access by other modules via
+                                       # Devel::ptkdb::obj().
+our $_ptkdb_obj_is_being_built = 0;    # Needs to be 'our' so we can 'local'
+                                       # it.
+my $isWin32 = $^O eq 'MSWin32';
+
+# ===========================================================================
+# Object static methods
+
+# We define here(), console_say(), and debug_say() at this place in the code so
+# they can be used in BEGIN. If you want to use them in other Devel::ptkdb
+# modules, either type out the Devel::ptkdb:: qualifier on each call, or subs
+# in those modules like this:
 #
 # sub console_say {
 #    goto &Devel::ptkdb::console_say;
@@ -46,38 +58,96 @@ our $VERSION = "2.0.0";
 #
 # This will invoke the call, with the same arguments, replacing the stack frame
 # (avoiding chatter in any stack traces), without the need for importing, which
-# could cause a circular modular inclusion issue.
+# could cause a circular module inclusion issue.
 
-sub console_prompt {
+sub here {
+    # caller() doesn't cut it for what we want, which is effectively:
+    #
+    # (caller(0))[3], __FILE__, __LINE__
+    #
+    # This is because caller() gives your the location from where this sub
+    # called, not where we are in this sub. And there is no way to use __FILE__
+    # and __LINE__ in a function because the are evalupated at compile
+    # time. So, we use two calls to caller.
+    #
+    # When caller is 0, we get where this function was called from, which is
+    # where the caller "is", and this function name, which we ignore.
+    #
+    # When caller is 1, we get the caller of this function.
+    #
+    # We default level to 0, which is useful for most purposes, but allow it to
+    # be specified so we can use it internally in our *say* functions.
+    my ($level) = ($_[0] // 0);
+    my ($pkg, $file, $line, $d4)  = caller($level);
+    my ($d1,  $d2,   $d3,   $sub) = caller($level + 1);
+
+    return    # instead of sprintf '%s [%s:%d]',
+        $sub // '<main>' . q( [) . $file . q(:) . $line . q(]);
+}
+
+sub _console_prompt {
+    my %args = (
+        where => here(),
+        msg   => '',
+        _id   => '_console_prompt',
+        @_
+    );
     my @msg;
-    for (@_) {
-        if (is_plain_arrayref($_)) {
-            push @msg, @{$_};
-        } else {
-            push @msg, $_;
-        }
+    if (is_plain_arrayref($args{msg})) {
+        push @msg, @{ $args{msg} };
+    } else {
+        push @msg, $args{msg};
     }
+
     sprintf(
-        "ptkdb> %s \n",
+        "%s (in %s)> %s \n",
+        $args{_id},
+        $args{_where},
         join("\n", map { split(/\n/, $_) } @msg)
     );
 }
 
 sub console_say {
-    print(qq(\n), console_prompt(@_));
-}
-
-sub console_string {
-    return (qq(\n) . console_prompt(@_));
+    my %args = (
+        _id    => 'console_say',
+        _where => here(1),
+        @_
+    );
+    print(qq(\n), _console_prompt(%args));
 }
 
 sub debug_say {
     my %args = (
+        _where => here(1),
         msg    => '',
         action => 'continue',
+        dump   => [],
+        _id    => 'debug_say',
         @_
     );
-    my $output = console_string($args{msg});
+    my @dump;
+    {
+        no strict 'refs';    ## no critic (TestingAndDebugging::ProhibitNoStrict)
+        for my $dump (@{ $args{dump} }) {
+            my $descr = (
+                  $dump->{descr}
+                ? $dump->{descr} . ': '
+                : q()
+            );
+            my $name = (
+                  $dump->{name}
+                ? $dump->{name} . ': '
+                : q()
+            );
+            push @dump, $descr . Data::Dumper->Dump([$dump->{ref}], ['*' . $name]);
+        }
+    }
+    my $output = join(
+        qq(\n),
+        '',
+        _console_prompt(%args),
+        @dump
+    );
 
     for ($args{action}) {
         # Use 'skip' when you temporarily do not want any output.
@@ -116,123 +186,9 @@ sub debug_say {
     }
 }
 
-sub debug_dump {
-    my %args = (
-        msg    => '',
-        action => 'continue',
-        dump   => [],
-        @_
-    );
-    my @output;
-    {
-        no strict 'refs';    ## no critic (TestingAndDebugging::ProhibitNoStrict)
-        for my $dump (@{ $args{dump} }) {
-            my $descr = (
-                  $dump->{descr}
-                ? $dump->{descr} . ': '
-                : q()
-            );
-            my $name = (
-                  $dump->{name}
-                ? $dump->{name} . ': '
-                : q()
-            );
-            push @output, $descr . Data::Dumper->Dump([$dump->{ref}], ['*' . $name]),
-                "\n";
-        }
-    }
-    debug_say(
-        msg    => $args{msg} . qq(\n) . join('', @output),
-        action => $args{action},
-    );
-}
+# ===========================================================================
+# Object instance methods
 
-sub do_alert {
-    my $self = shift;
-    my %args = (
-        -title => 'ptkdb error',
-        -msg   => 'Unspecified error.',
-        @_
-    );
-
-    my $message = (
-        is_plain_arrayref($args{-msg})
-        ? join(
-            qq(\n),
-            map { split(/\n/, $_) } @{ $args{-msg} }
-            )
-        : $args{-msg}
-    );
-
-    my $previous_focus = $self->{main_window}->focusCurrent();
-
-    my $top = $self->{main_window}->Toplevel(-title => $args{-title});
-
-    $top->transient($self->{main_window});
-
-    $top->Label(
-        -text       => $message,
-        -justify    => 'left',
-        -wraplength => 600,
-    )->pack(
-        -side   => 'top',
-        -fill   => 'both',
-        -expand => 1,
-        -padx   => 10,
-        -pady   => 10,
-    );
-
-    $top->Button(
-        -text    => 'OK',
-        -command => sub { $top->destroy(); },
-    )->pack(
-        -side => 'bottom',
-        -pady => 10,
-    );
-
-    $top->bind(
-        '<Destroy>' => sub {
-            if ($previous_focus && Tk::Exists($previous_focus)) {
-                $previous_focus->afterIdle(sub { $previous_focus->focusForce(); });
-            }
-        }
-    );
-
-    return;
-}
-
-sub error_dialog {
-    my $self = shift;
-    my %args = (
-        -title => 'ptkdb error',
-        -msg   => ['Unspecified error.'],
-        @_
-    );
-
-    my $previous_focus = $self->{main_window}->focusCurrent();
-    my $message        = join qq(\n), @{ $args{-msg} };
-
-    $self->{main_window}->messageBox(
-        %args,
-        -type => 'OK',
-        -icon => 'error',
-    );
-
-    if ($previous_focus && Tk::Exists($previous_focus)) {
-        $previous_focus->afterIdle(
-            sub {
-                $previous_focus->focusForce();
-                $previous_focus->icursor('end')
-                    if $previous_focus->can('icursor');
-            }
-        );
-    }
-
-    return;
-}
-#
-# Constructor for our Devel::ptkdb
-#
 sub new {
     my ($type) = @_;
     my ($self) = {};
@@ -240,7 +196,7 @@ sub new {
     bless $self, $type;
 
     # Handles .ptkdb file saves and loads.
-    $self->{state_manager} = Devel::ptkdb::State->new(debugger => $self,);
+    $self->{state_manager} = Devel::ptkdb::State->new(ptkdb_obj => $self);
 
     # ===================================================================
     # Below here is code that existed in this function prior to the
@@ -273,15 +229,117 @@ sub new {
 
 }
 
+sub do_alert {
+    my $self = shift;
+    my %args = (
+        title => 'ptkdb alert (' . here(1) . ')',
+        msg   => 'Unspecified alert.  (' . here(1) . ')',
+        @_
+    );
+
+    my $message = (
+        is_plain_arrayref($args{msg})
+        ? join(
+            qq(\n),
+            map { split(/\n/, $_) } @{ $args{msg} }
+            )
+        : $args{msg}
+    );
+
+    my $previous_focus = $self->{main_window}->focusCurrent();
+    my $top            = $self->{main_window}->Toplevel(-title => $args{title});
+
+    $top->transient($self->{main_window});
+
+    $top->Label(
+        -text       => $message,
+        -justify    => 'left',
+        -wraplength => 600,
+    )->pack(
+        -side   => 'top',
+        -fill   => 'both',
+        -expand => 1,
+        -padx   => 10,
+        -pady   => 10,
+    );
+
+    $top->Button(
+        -text    => 'OK',
+        -command => sub { $top->destroy(); },
+    )->pack(
+        -side => 'bottom',
+        -pady => 10,
+    );
+
+    $top->bind(
+        '<Destroy>' => sub {
+            if ($previous_focus && Tk::Exists($previous_focus)) {
+                $previous_focus->afterIdle(
+                    sub {
+                        $previous_focus->focusForce();
+                        $previous_focus->icursor('end')
+                            if $previous_focus->can('icursor');
+                    }
+                );
+            } else {
+                $self->focus_debugger_command_entry();
+            }
+        }
+    );
+
+    return;
+}
+
+sub error_dialog {
+    my $self = shift;
+    my %args = (
+        title => 'ptkdb error (' . here_parent() . ')',
+        msg   => 'Unspecified error (' . here_parent() . ')',
+        @_
+    );
+
+    my $message = (
+        is_plain_arrayref($args{msg})
+        ? join(
+            qq(\n),
+            map { split(/\n/, $_) } @{ $args{msg} }
+            )
+        : $args{msg}
+    );
+    my $previous_focus = $self->{main_window}->focusCurrent();
+
+    $self->{main_window}->messageBox(
+        %args,
+        -type => 'OK',
+        -icon => 'error',
+    );
+
+    if ($previous_focus && Tk::Exists($previous_focus)) {
+        $previous_focus->afterIdle(
+            sub {
+                $previous_focus->focusForce();
+                $previous_focus->icursor('end')
+                    if $previous_focus->can('icursor');
+            }
+        );
+    } else {
+        $previous_focus->afterIdle(
+            sub {
+                $self->focus_debugger_command_entry();
+            }
+        );
+    }
+
+    return;
+}
+#
+# Constructor for our Devel::ptkdb
+#
 sub make_file_save_name {
     my ($self, $filename) = @_;
 
     $filename =~ s/\.(?:pl|pm|t)\z//;
     return "$filename.ptkdb";
-}
-
-sub has_window {
-    return defined $window;
 }
 
 sub restore_state_file {
@@ -294,15 +352,15 @@ sub save_state_file {
     return $self->{state_manager}->save_state_file(@args);
 }
 
-sub window {
-    return $window if defined $window;
+sub obj {
+    return $_ptkdb_obj if defined $_ptkdb_obj;
 
-    return undef if $window_is_being_built;    ## no critic (Subroutines::ProhibitExplicitReturnUndef)
+    return undef if $_ptkdb_obj_is_being_built;    ## no critic (Subroutines::ProhibitExplicitReturnUndef)
 
-    local $window_is_being_built = 1;
-    $window = __PACKAGE__->new;
+    local $_ptkdb_obj_is_being_built = 1;
+    $_ptkdb_obj = __PACKAGE__->new;
 
-    return $window;
+    return $_ptkdb_obj;
 }
 
 # =========================================================================
@@ -430,8 +488,8 @@ sub DoBugReport {
 sub brkpt {
     my ($fname, @idx) = @_;
 
-    my $offset = DB::debugger_injected_line_offset($fname);
-    my $window = Devel::ptkdb::window();
+    my $offset    = DB::debugger_injected_line_offset($fname);
+    my $ptkdb_obj = Devel::ptkdb::obj();
 
     for (@idx) {
         if (!&DB::is_line_breakable($fname, $_ + $offset)) {
@@ -439,7 +497,7 @@ sub brkpt {
             print "$filename:$line:  $fname line $_ is not breakable\n";
             next;
         }
-        $window->insertBreakpoint($fname, $_, 1);    # insert a simple breakpoint
+        $ptkdb_obj->insertBreakpoint($fname, $_, 1);    # insert a simple breakpoint
     }
 }
 
@@ -447,9 +505,9 @@ sub brkpt {
 # Set conditional breakpoint(s)
 #
 sub condbrkpt {
-    my ($fname) = shift;
-    my $offset  = DB::debugger_injected_line_offset($fname);
-    my $window  = Devel::ptkdb::window();
+    my ($fname)   = shift;
+    my $offset    = DB::debugger_injected_line_offset($fname);
+    my $ptkdb_obj = Devel::ptkdb::obj();
 
     while (@_) {    # arg loop
         my ($index, $expr) = splice @_, 0, 2;    # take args 2 at a time
@@ -459,14 +517,14 @@ sub condbrkpt {
             print "$filename:$line:  $fname line $index is not breakable\n";
             next;
         }
-        $window->insertBreakpoint($fname, $index, 1, $expr);    # insert a simple breakpoint
+        $ptkdb_obj->insertBreakpoint($fname, $index, 1, $expr);    # insert a simple breakpoint
     }
 
 }
 
 sub brkonsub {
     my (@names) = @_;
-    my $window = Devel::ptkdb::window();
+    my $ptkdb_obj = Devel::ptkdb::obj();
 
     for (@names) {
 
@@ -481,7 +539,7 @@ sub brkonsub {
 
         for ($2 .. $3) {
             next unless &DB::is_line_breakable($1, $_);
-            $window->insertBreakpoint($1, $_, 1);
+            $ptkdb_obj->insertBreakpoint($1, $_, 1);
             last;                                      # only need the one breakpoint
         }
     }
@@ -513,9 +571,9 @@ sub brkonsub_regex {
 #
 sub textTagConfigure {
     my ($tag, @config) = @_;
-    my $window = Devel::ptkdb::window();
+    my $ptkdb_obj = Devel::ptkdb::obj();
 
-    $window->{'text'}->tagConfigure($tag, @config);
+    $ptkdb_obj->{'text'}->tagConfigure($tag, @config);
 
 }
 
@@ -523,9 +581,9 @@ sub textTagConfigure {
 # Change the tabs in the text field
 #
 sub setTabs {
-    my $window = Devel::ptkdb::window();
+    my $ptkdb_obj = Devel::ptkdb::obj();
 
-    $window->{'text'}->configure(-tabs => [@_]);
+    $ptkdb_obj->{'text'}->configure(-tabs => [@_]);
 
 }
 
@@ -535,8 +593,8 @@ sub setTabs {
 # the expression list window.
 #
 sub add_exprs {
-    my $window = Devel::ptkdb::window();
-    push @{ $window->{'expr_list'} },
+    my $ptkdb_obj = Devel::ptkdb::obj();
+    push @{ $ptkdb_obj->{'expr_list'} },
         map { 'expr' => $_, 'depth' => $Devel::ptkdb::expr_depth }, @_;
 }
 
@@ -545,8 +603,8 @@ sub add_exprs {
 # ptkdb sets up it's windows
 #
 sub register_user_window_init {
-    my $window = Devel::ptkdb::window();
-    push @{ $window->{'user_window_init_list'} }, @_;
+    my $ptkdb_obj = Devel::ptkdb::obj();
+    push @{ $ptkdb_obj->{'user_window_init_list'} }, @_;
 }
 
 #
@@ -554,13 +612,13 @@ sub register_user_window_init {
 # ptkdb enters from code
 #
 sub register_user_DB_entry {
-    my $window = Devel::ptkdb::window();
-    push @{ $window->{'user_window_DB_entry_list'} }, @_;
+    my $ptkdb_obj = Devel::ptkdb::obj();
+    push @{ $ptkdb_obj->{'user_window_DB_entry_list'} }, @_;
 }
 
 sub get_notebook_widget {
-    my $window = Devel::ptkdb::window();
-    return $window->{'notebook'};
+    my $ptkdb_obj = Devel::ptkdb::obj();
+    return $ptkdb_obj->{'notebook'};
 }
 
 #
@@ -616,9 +674,10 @@ sub setup_main_window {
     $self->setup_menu_bar();
     $self->setup_button_bar();
     $self->setup_command_line();    # Allows typing some debugger commands
+
+    $self->focus_debugger_command_widget();
     $self->setup_frames();          # Setup our Code, Data, and breakpoints
 
-    # Start in the command line box
     $self->focus_debugger_command_widget();
 }
 
@@ -650,7 +709,7 @@ sub setup_shared_callbacks {
         },
 
         quitSub => sub {
-            $self->close_ptkdb_window();
+            $self->DoQuit();
         },
     };
 }
@@ -694,7 +753,7 @@ sub DoQuit {
 sub DoOpen {
     my $self = shift;
     my ($topLevel, $listBox, $frame, $selectedFile, @fList);
-    my $window = Devel::ptkdb::window();
+    my $ptkdb_obj = Devel::ptkdb::obj();
 
     #
     # subroutine we call when we've selected a file
@@ -703,7 +762,7 @@ sub DoOpen {
     my $chooseSub = sub {
         $selectedFile = $listBox->get('active');
         print "attempting to open $selectedFile\n";
-        $window->set_file($selectedFile, 0);
+        $ptkdb_obj->set_file($selectedFile, 0);
         destroy $topLevel;
     };
 
@@ -763,10 +822,10 @@ sub do_tabs {
     my ($w, $result, $tabs_cfg);
     require Tk::Dialog;
 
-    my $window = Devel::ptkdb::window();
-    $w = $window->{'main_window'}->DialogBox(-title => "Tabs", -buttons => [qw/Okay Cancel/]);
+    my $ptkdb_obj = Devel::ptkdb::obj();
+    $w = $ptkdb_obj->{'main_window'}->DialogBox(-title => "Tabs", -buttons => [qw/Okay Cancel/]);
 
-    $tabs_cfg = $window->{'text'}->cget(-tabs);
+    $tabs_cfg = $ptkdb_obj->{'text'}->cget(-tabs);
 
     $tabs_str = join " ", @$tabs_cfg if $tabs_cfg;
 
@@ -778,14 +837,14 @@ sub do_tabs {
 
     return unless $result eq 'Okay';
 
-    $window->{'text'}->configure(-tabs => [split /\s/, $tabs_str]);
+    $ptkdb_obj->{'text'}->configure(-tabs => [split /\s/, $tabs_str]);
 }
 
 sub close_ptkdb_window {
     my ($self) = @_;
 
-    my $window = Devel::ptkdb::window();
-    $window->{'event'}    = 'run';
+    my $ptkdb_obj = Devel::ptkdb::obj();
+    $ptkdb_obj->{'event'} = 'run';
     $self->{current_file} = "";      # force a file reset
     $self->{'main_window'}->destroy;
     $self->{'main_window'} = undef;
@@ -1169,9 +1228,7 @@ sub setup_command_line {
 
     my $mw = $self->{main_window};
 
-    $self->{debugger_command_obj} = Devel::ptkdb::Cmd->new(
-        window => $self,
-    );
+    $self->{debugger_command_obj} = Devel::ptkdb::Cmd->new(ptkdb_obj => $self);
 
     my $frm = $mw->Frame()->pack(
         -side => 'top',
@@ -1299,12 +1356,15 @@ sub save_bookmarks {
             $str = $d->Dump();
         }
 
-        print $F $str || die "outputing bookmarks failed";
+        print $F $str || die "Saving bookmarks failed: $!";
         close($F);
     };
 
     if ($@) {
-        $self->DoAlert("Couldn't save bookmarks file $@");
+        $self->do_alert(
+            title => 'Bookmarks Error',
+            msg   => "$@"
+        );
         return;
     }
 
@@ -1321,9 +1381,9 @@ sub save_bookmarks {
 # controled by package variable $Devel::ptkdb::add_expr_depth
 #
 sub expr_expand {
-    my ($path) = @_;
-    my $window = Devel::ptkdb::window();
-    my $hl     = $window->{'data_list'};
+    my ($path)    = @_;
+    my $ptkdb_obj = Devel::ptkdb::obj();
+    my $hl        = $ptkdb_obj->{'data_list'};
     my ($parent, $root, $index, @children, $depth);
 
     $parent = $path;
@@ -1339,7 +1399,7 @@ sub expr_expand {
     # Determine the index of the root of our expression
     #
     $index = 0;
-    for (@{ $window->{'expr_list'} }) {
+    for (@{ $ptkdb_obj->{'expr_list'} }) {
         last if $_->{'expr'} eq $root;
         $index += 1;
     }
@@ -1354,18 +1414,18 @@ sub expr_expand {
 
         $hl->deleteOffsprings($path);
 
-        $window->{'expr_list'}->[$index]->{'depth'} = $depth - 1;    # adjust our depth
+        $ptkdb_obj->{'expr_list'}->[$index]->{'depth'} = $depth - 1;    # adjust our depth
     } else {
         #
         # Delete the existing tree and insert a new one
         #
         $hl->deleteEntry($root);
         $hl->add($root, -at => $index);
-        $window->{'expr_list'}->[$index]->{'depth'} += $Devel::ptkdb::add_expr_depth;
+        $ptkdb_obj->{'expr_list'}->[$index]->{'depth'} += $Devel::ptkdb::add_expr_depth;
         #
         # Force an update on our expressions
         #
-        $window->{'event'} = 'update';
+        $ptkdb_obj->{'event'} = 'update';
     }
 }
 
@@ -1872,21 +1932,6 @@ sub setup_options {
 
 }
 
-sub DoAlert {
-    my ($self, $msg, $title) = @_;
-    my ($dlg);
-    my $okaySub = sub {
-        destroy $dlg;
-    };
-    $dlg = $self->{main_window}->Toplevel(-title => $title || "Alert", -overanchor => 'cursor');
-
-    $dlg->Label(-text => $msg)->pack(-side => 'top');
-
-    $dlg->Button(-text => "Okay", -command => $okaySub)->pack(-side => 'top')->focus;
-    $dlg->bind('<Return>', $okaySub);
-
-}
-
 sub get_entry_text {
     my ($self) = @_;
 
@@ -2269,7 +2314,11 @@ sub insertExpr {
                 $dl->add($dirPath . $name, -text => "$name = $label$theRef");
             }
         };
-        $self->DoAlert($@), return 0 if $@;
+        my $error = $@;
+        if ($error) {
+            $self->do_alert(msg => $@);
+            return 0;
+        }
         return 1;
     }
 
@@ -2277,8 +2326,9 @@ sub insertExpr {
         my ($idx);
         $idx = 0;
         eval { $dl->add($dirPath . $name, -text => "$name = $theRef"); };
-        if ($@) {
-            $self->DoAlert($@);
+        my $error = $@;
+        if ($error) {
+            $self->do_alert(msg => "$@");
             return 0;
         }
         $result = 1;
@@ -2295,7 +2345,7 @@ sub insertExpr {
                         -text => "[$idx] = $r REUSED ADDR"
                     );
                 };
-                $self->DoAlert($@) if ($@);
+                $self->do_alert(msg => "$@") if ($@);
                 next;
             }
 
@@ -2314,8 +2364,9 @@ sub insertExpr {
 
     if ("$theRef" !~ /HASH\050\060x[0-9a-f]*\051/o) {
         eval { $dl->add($dirPath . fixExprPath($name), -text => "$name = $theRef"); };
-        if ($@) {
-            $self->DoAlert($@);
+        my $error = $@;
+        if ($error) {
+            $self->do_alert(msg => "$@");
             return 0;
         }
         return 1;
@@ -2811,51 +2862,14 @@ sub get_state {
     our ($files, $expr_list, $eval_saved_text, $main_win_geometry);
 
     do "$fname";
-
-    if ($@) {
-        $self->DoAlert($@);
+    my $error = $@;
+    if ($error) {
+        $self->do_alert(msg => $@);
         return (undef) x 4;    # return a list of 4 undefined values
     }
 
     return ($files, $expr_list, $eval_saved_text, $main_win_geometry);
 }
-
-=for obsolete
-
-sub restoreStateFile {
-    my ($self, $fname) = @_;
-    my ($saveCurFile, $s, @n, $n);
-
-    if (!(-e $fname && -r $fname)) {
-        $self->DoAlert("$fname does not exist");
-        return;
-    }
-
-    my ($files, $expr_list, $eval_saved_text, $main_win_geometry) = $self->get_state($fname);
-    my ($f, $brks);
-
-    return unless defined $files || defined $expr_list;
-
-    &DB::restore_breakpoints_from_save($files);
-
-    #
-    # This should force the breakpoints to be restored
-    #
-    $saveCurFile = $self->{current_file};
-
-    @$self{ 'current_file', 'expr_list', 'eval_saved_text' } = ("", $expr_list, $eval_saved_text);
-
-    $self->set_file($saveCurFile, $self->{current_line});
-
-    $self->{'event'} = 'update';
-
-    if ($main_win_geometry && $self->{'main_window'}) {
-        # restore the height and width of the window
-        $self->{main_window}->geometry($main_win_geometry);
-    }
-}
-
-=cut
 
 sub updateEvalWindow {
     my ($self, @result) = @_;
@@ -2954,11 +2968,11 @@ sub setupEvalWindow {
         @Devel::ptkdb::eval_text_font
     )->pack(-side => 'top', -fill => 'both', -expand => 1);
 
-    my $window = Devel::ptkdb::window();
-    my $btn    = $top->Button(
+    my $ptkdb_obj = Devel::ptkdb::obj();
+    my $btn       = $top->Button(
         -text    => 'Eval...',
         -command => sub {
-            $window->{event} = 'reeval';
+            $ptkdb_obj->{event} = 'reeval';
         }
     )->pack(-side => 'left', -fill => 'x', -expand => 1);
 
@@ -3039,7 +3053,7 @@ Data::Dumper Version $Data::Dumper::VERSION
     $threadString
 __STR__
 
-    $self->DoAlert($str, "About ptkdb");
+    $self->do_alert(msg => $str, title => "About ptkdb");
 }
 
 #
@@ -3048,20 +3062,20 @@ __STR__
 #
 sub SetBreakPoint {
     my ($self, $isTemp) = @_;
-    my $window = Devel::ptkdb::window();
-    my $lineno = $window->get_lineno();
-    my $expr   = $window->clear_entry_text();
+    my $ptkdb_obj = Devel::ptkdb::obj();
+    my $lineno    = $ptkdb_obj->get_lineno();
+    my $expr      = $ptkdb_obj->clear_entry_text();
 
-    if (!&DB::is_line_breakable($window->{current_file}, $lineno + $self->{'line_offset'})) {
-        $window->DoAlert("line $lineno in $window->{current_file} is not breakable");
+    if (!&DB::is_line_breakable($ptkdb_obj->{current_file}, $lineno + $self->{'line_offset'})) {
+        $ptkdb_obj->do_alert(msg => "line $lineno in $ptkdb_obj->{current_file} is not breakable");
         return 0;
     }
 
     if (!$isTemp) {
-        $window->insertBreakpoint($window->{current_file}, $lineno, 1, $expr);
+        $ptkdb_obj->insertBreakpoint($ptkdb_obj->{current_file}, $lineno, 1, $expr);
         return 1;
     } else {
-        $window->insertTempBreakpoint($window->{current_file}, $lineno);
+        $ptkdb_obj->insertTempBreakpoint($ptkdb_obj->{current_file}, $lineno);
         return 1;
     }
 
@@ -3072,27 +3086,27 @@ sub UnsetBreakPoint {
     my ($self) = @_;
     my $lineno = $self->get_lineno();
 
-    my $window = Devel::ptkdb::window();
-    $self->removeBreakpoint($window->{current_file}, $lineno);
+    my $ptkdb_obj = Devel::ptkdb::obj();
+    $self->removeBreakpoint($ptkdb_obj->{current_file}, $lineno);
 }
 
 sub balloon_post {
-    my $window = Devel::ptkdb::window();
-    my $txt    = $window->{'text'};
+    my $ptkdb_obj = Devel::ptkdb::obj();
+    my $txt       = $ptkdb_obj->{'text'};
 
-    return 0 if ($window->{'expr_ballon_msg'} eq "") || ($window->{'balloon_expr'} eq "");    # don't post for an empty string
+    return 0 if ($ptkdb_obj->{'expr_ballon_msg'} eq "") || ($ptkdb_obj->{'balloon_expr'} eq "");   # don't post for an empty string
 
-    return $window->{'balloon_coord'};
+    return $ptkdb_obj->{'balloon_coord'};
 }
 
 sub balloon_motion {
     my ($txt, $x, $y) = @_;
     my ($offset_x, $offset_y) = ($x + 4, $y + 4);
-    my $window = Devel::ptkdb::window();
-    my $txt2   = $window->{'text'};
+    my $ptkdb_obj = Devel::ptkdb::obj();
+    my $txt2      = $ptkdb_obj->{'text'};
     my $data;
 
-    $window->{'balloon_coord'} = "$offset_x,$offset_y";
+    $ptkdb_obj->{'balloon_coord'} = "$offset_x,$offset_y";
 
     $x -= $txt->rootx;
     $y -= $txt->rooty;
@@ -3103,20 +3117,20 @@ sub balloon_motion {
     if ($txt2->tagRanges('sel')) {    # check to see if 'sel' tag exists (return undef value)
         $data = $txt2->get("sel.first", "sel.last");    # get the text between the 'first' and 'last' point of the sel (selection) tag
     } else {
-        $data = $window->retrieve_text_expr($x, $y);
+        $data = $ptkdb_obj->retrieve_text_expr($x, $y);
     }
 
     if (!$data) {
-        $window->{'balloon_expr'} = "";
+        $ptkdb_obj->{'balloon_expr'} = "";
         return 0;
     }
 
-    return 0 if ($data eq $window->{'balloon_expr'});    # nevermind if it's the same expression
+    return 0 if ($data eq $ptkdb_obj->{'balloon_expr'});    # nevermind if it's the same expression
 
-    $window->{'event'}        = 'balloon_eval';
-    $window->{'balloon_expr'} = $data;
+    $ptkdb_obj->{'event'}        = 'balloon_eval';
+    $ptkdb_obj->{'balloon_expr'} = $data;
 
-    return 1;                                            # ballon will be canceled and a new one put up(maybe)
+    return 1;                                               # ballon will be canceled and a new one put up(maybe)
 }
 
 sub retrieve_text_expr {
@@ -3256,8 +3270,8 @@ sub DoRestart {
 
 sub stop_on_warning_cb {
     &$DB::ptkdb::warn_sig_save() if $DB::ptkdb::warn_sig_save;    # call any previously registered warning
-    my $window = Devel::ptkdb::window();
-    $window->DoAlert(@_);
+    my $ptkdb_obj = Devel::ptkdb::obj();
+    $ptkdb_obj->do_alert(msg => @_);
     $DB::single = 1;                                              # forces debugger to stop next time
 }
 

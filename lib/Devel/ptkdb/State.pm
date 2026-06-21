@@ -2,25 +2,43 @@ package Devel::ptkdb::State;
 
 # Functions that save and load the information saved in .ptkdb files.
 
+# ===========================================================================
+# Pragmas
 use strict;
 use warnings;
+
+# ===========================================================================
+# Core and CPAN modules
 use Cwd qw(getcwd realpath);
 use Data::Dumper;
 use File::Basename qw(dirname basename);
 use File::Spec;
 
+# ===========================================================================
+# Project modules
+# None
+
+# ===========================================================================
+# Shareable package data
+# None
+
+# ===========================================================================
 # Object static data
 my %S = (state_api_version => '2.0.0');
 
+# ===========================================================================
+# Object static methods
 sub new {
     my ($class, %args) = @_;
 
     my $self = bless {}, $class;
-    $self->{debugger}        = $args{debugger};
+    $self->{ptkdb_obj}       = $args{ptkdb_obj};
     $self->{state_file_name} = $self->default_state_file_name();
     return $self;
 }
 
+# ===========================================================================
+# Object instance methods
 sub default_state_file_name {
     my ($self) = @_;
 
@@ -31,8 +49,8 @@ sub default_state_file_name {
     if (!-e $script) {
         if (!-w dirname($script)) {
             my $cwd = getcwd();
-            $self->{debugger}->DoAlert(
-                "'$script' is not writable. Assuming you are debugging a file you do not own. Defaulting to current directory '$cwd'."
+            $self->{ptkdb_obj}->do_alert(msg =>
+                    "'$script' is not writable. Assuming you are debugging a file you do not own. Defaulting to current directory '$cwd'."
             );
             $script = File::Spec->catfile($cwd, basename($script));
         }
@@ -48,19 +66,21 @@ sub state_file_name {
 
 sub current_state {
     my ($self) = @_;
-    my $debugger = $self->{debugger};
+    my $ptkdb_obj = $self->{ptkdb_obj};
 
     my $eval_saved_text
-        = exists $debugger->{eval_window}
-        ? $debugger->{eval_text}->get('0.0', 'end')
-        : $debugger->{eval_saved_text};
+        = exists $ptkdb_obj->{eval_window}
+        ? $ptkdb_obj->{eval_text}->get('0.0', 'end')
+        : $ptkdb_obj->{eval_saved_text};
 
     return {
         version           => $S{state_api_version},
         files             => DB::breakpoint_state(),
-        expr_list         => $debugger->{expr_list},
+        expr_list         => $ptkdb_obj->{expr_list},
         eval_saved_text   => $eval_saved_text,
-        main_win_geometry => $debugger->{main_window} ? $debugger->{main_window}->geometry : undef,
+        main_win_geometry => $ptkdb_obj->{main_window}
+        ? $ptkdb_obj->{main_window}->geometry
+        : undef,
     };
 }
 
@@ -68,23 +88,23 @@ sub apply_state {
     my ($self, $state) = @_;
     return unless $state;
 
-    my $debugger = $self->{debugger};
+    my $ptkdb_obj = $self->{ptkdb_obj};
 
     DB::restore_breakpoint_state($state->{files});
 
-    my $save_cur_file = $debugger->{current_file};
+    my $save_cur_file = $ptkdb_obj->{current_file};
 
-    $debugger->{current_file}    = "";
-    $debugger->{expr_list}       = $state->{expr_list} if exists $state->{expr_list};
-    $debugger->{eval_saved_text} = $state->{eval_saved_text};
+    $ptkdb_obj->{current_file}    = "";
+    $ptkdb_obj->{expr_list}       = $state->{expr_list} if exists $state->{expr_list};
+    $ptkdb_obj->{eval_saved_text} = $state->{eval_saved_text};
 
-    $debugger->set_file($save_cur_file, $debugger->{current_line});
+    $ptkdb_obj->set_file($save_cur_file, $ptkdb_obj->{current_line});
 
-    if ($state->{main_win_geometry} && $debugger->{main_window}) {
-        $debugger->{main_window}->geometry($state->{main_win_geometry});
+    if ($state->{main_win_geometry} && $ptkdb_obj->{main_window}) {
+        $ptkdb_obj->{main_window}->geometry($state->{main_win_geometry});
     }
 
-    $debugger->{event} = 'update';
+    $ptkdb_obj->{event} = 'update';
 }
 
 sub write_state_file {
@@ -112,8 +132,8 @@ sub read_state_file {
         or ref($state) ne 'HASH'
         or not exists $state->{version}
         or $state->{version} ne $S{state_api_version}) {
-        $self->{debugger}->DoAlert(
-            "State file $state_file_name format does not match the current format. Not loading, Please re-establish your breakpoints, variable watches, etc. and save a new version."
+        $self->{ptkdb_obj}->do_alert(msg =>
+                "State file $state_file_name format does not match the current format. Not loading, Please re-establish your breakpoints, variable watches, etc. and save a new version."
         );
         return {};
     }
@@ -159,8 +179,8 @@ sub restore_state_file {
 sub choose_state_file {
     my ($self, %args) = @_;
 
-    my $debugger        = $self->{debugger};
-    my $main_window     = $debugger->{main_window};
+    my $ptkdb_obj       = $self->{ptkdb_obj};
+    my $main_window     = $ptkdb_obj->{main_window};
     my $state_file_name = $args{initial} || $self->state_file_name();
     my $initial_dir     = dirname($state_file_name);
     my $initial_file    = basename($state_file_name);
@@ -193,7 +213,7 @@ sub choose_state_file {
 sub save_state_callback {
     my ($self, $name_in) = @_;
 
-    my $debugger = $self->{debugger};
+    my $ptkdb_obj = $self->{ptkdb_obj};
 
     my $chosen = $self->choose_state_file(
         mode    => 'save',
@@ -204,13 +224,13 @@ sub save_state_callback {
     return unless defined $chosen;
 
     eval { $self->save_state_file($chosen) };
-    $debugger->DoAlert($@) if $@;
+    $ptkdb_obj->do_alertt(msg => $@) if $@;
 }
 
 sub restore_state_callback {
     my ($self, $name_in) = @_;
 
-    my $debugger = $self->{debugger};
+    my $ptkdb_obj = $self->{ptkdb_obj};
 
     my $chosen = $self->choose_state_file(
         mode    => 'open',
@@ -221,7 +241,7 @@ sub restore_state_callback {
     return unless defined $chosen;
 
     eval { $self->restore_state_file($chosen) };
-    $debugger->DoAlert($@) if $@;
+    $ptkdb_obj->do_alert(msg => $@) if $@;
 }
 
 1;
