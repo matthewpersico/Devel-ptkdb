@@ -12,7 +12,9 @@ use warnings;
 
 # ===========================================================================
 # Core and CPAN modules
+use Carp qw(confess);
 use Config;
+use Exporter 'import';
 
 # ===========================================================================
 # Project modules
@@ -21,7 +23,18 @@ use Config;
 # ===========================================================================
 # Shareable package data
 # None
-
+our @EXPORT = qw(
+    brkpt
+    condbrkpt
+    brkonsub
+    brkonsub_regex
+    textTagConfigure
+    add_exprs
+    setTabs
+    register_user_window_init
+    register_user_DB_entry
+    get_notebook_widget
+);
 # ===========================================================================
 # Package data
 # None
@@ -29,23 +42,21 @@ use Config;
 # ===========================================================================
 # Package methods
 
-sub debug_say {
+# Not part of the API
+sub _debug_say {
     goto &Devel::ptkdb::debug_say;
+}
+
+# Not yet documented
+sub verbose {
+    my $ptkdb_obj = Devel::ptkdb::obj();
+    $ptkdb_obj->{'verbose'} = $_[0];
 }
 
 sub brkpt {
     my ($fname, @idx) = @_;
-
-    debug_say(
-        msg    => 'made it to bkrpt()',
-        action => 'trace',
-        dump   => {
-            descr => 'args',
-            ref   => [$fname, @idx]
-        }
-    );
-    my $offset    = DB::debugger_injected_line_offset($fname);
     my $ptkdb_obj = Devel::ptkdb::obj();
+    my $offset    = DB::debugger_injected_line_offset($fname);
 
     for (@idx) {
         if (!&DB::is_line_breakable($fname, $_ + $offset)) {
@@ -59,8 +70,8 @@ sub brkpt {
 
 sub condbrkpt {
     my ($fname)   = shift;
-    my $offset    = DB::debugger_injected_line_offset($fname);
     my $ptkdb_obj = Devel::ptkdb::obj();
+    my $offset    = DB::debugger_injected_line_offset($fname);
 
     while (@_) {    # arg loop
         my ($index, $expr) = splice @_, 0, 2;    # take args 2 at a time
@@ -129,13 +140,16 @@ sub add_exprs {
         map { 'expr' => $_, 'depth' => $ptkdb_obj->{'expr_depth'} }, @_;
 }
 
+sub stopOnWarning {
+    my $ptkdb_obj = Devel::ptkdb::obj();
+    $ptkdb_obj->{'stop_on_warning'} = 1;
+}
+
 # ===================================================================
 # These appear to be part of the use ptkdbrc API, but not documented.
 sub setTabs {
     my $ptkdb_obj = Devel::ptkdb::obj();
-
     $ptkdb_obj->{'text'}->configure(-tabs => [@_]);
-
 }
 
 # Register a subroutine reference that will be called whenever ptkdb sets up

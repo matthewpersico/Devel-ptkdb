@@ -11,9 +11,13 @@ use Carp qw(cluck carp confess longmess);
 use Config;
 use Cwd qw(realpath);
 use Data::Dumper;
+use File::Basename qw(dirname basename);
 use FileHandle;
-use Ref::Util qw(is_plain_arrayref);
+use File::Spec;
+use Ref::Util qw(is_plain_arrayref is_ref);
 use Tk;
+use Tk::Adjuster;
+use Tk::Balloon;
 use Tk::Dialog;
 use Tk::TextUndo;
 use Tk::ROText;
@@ -62,7 +66,7 @@ my $isWin32 = $^O eq 'MSWin32';
 # could cause a circular module inclusion issue.
 
 sub here {
-    my $level = ($_[0] // 0);
+    my $level = ($_[0] ||= 0);
     # caller() doesn't cut it for what we want, which is effectively:
     #
     # (caller(0))[3], __FILE__, __LINE__
@@ -87,14 +91,13 @@ sub here {
     my ($d1,  $d2,   $d3,   $sub) = caller($level + 1);
 
     return    # instead of sprintf '%s [%s:%d]',
-        $sub // '<main>' . q( [) . $file . q(:) . $line . q(]);
+        (($sub // '<main>') . q( [) . $file . q(:) . $line . q(]));
 }
 
 sub _console_prompt {
     my %args = (
-        where => here(),
-        msg   => '',
-        _id   => '_console_prompt',
+        msg => '',
+        _id => '_console_prompt',
         @_
     );
     my @msg;
@@ -103,22 +106,27 @@ sub _console_prompt {
     } else {
         push @msg, $args{msg};
     }
+    my $msg_string = join("\n", map { split(/\n/, $_) } @msg);
+    chomp $msg_string;
 
-    sprintf(
-        "%s (in %s)> %s \n",
-        $args{_id},
-        $args{_where},
-        join("\n", map { split(/\n/, $_) } @msg)
-    );
+    return ($args{_id} . ($args{_where} ? " (in $args{where})" : q()) . "> $msg_string" . qq(\n));
 }
 
 sub console_say {
-    my %args = (
-        _id    => 'console_say',
-        _where => here(1),
-        @_
-    );
-    print(qq(\n), _console_prompt(%args));
+    my %args;
+    if (scalar(@_) == 1) {
+        # simple text print
+        $args{msg}   = $_[0];
+        $args{_id}   = 'ptkdb';
+        $args{where} = '';
+    } else {
+        %args = (
+            _id    => 'console_say',
+            _where => here(1),
+            @_
+        );
+    }
+    print(_console_prompt(%args));
 }
 
 sub debug_say {
@@ -130,28 +138,16 @@ sub debug_say {
         _id    => 'debug_say',
         @_
     );
-    my @dump;
-    {
-        no strict 'refs';    ## no critic (TestingAndDebugging::ProhibitNoStrict)
-        for my $dump (@{ $args{dump} }) {
-            my $descr = (
-                  $dump->{descr}
-                ? $dump->{descr} . ': '
-                : q()
-            );
-            my $name = (
-                  $dump->{name}
-                ? $dump->{name} . ': '
-                : q()
-            );
-            push @dump, $descr . Data::Dumper->Dump([$dump->{ref}], ['*' . $name]);
-        }
-    }
+    my $dump = (
+        is_ref($args{dump})
+        ? $args{dump}
+        : [$args{dump}]
+    );
     my $output = join(
         qq(\n),
         '',
         _console_prompt(%args),
-        @dump
+        Data::Dumper->Dump([$dump], [qw(*dumped_data)])
     );
 
     for ($args{action}) {
@@ -241,6 +237,68 @@ sub new {
     $self->{'user_window_DB_entry_list'} = [];
 
     $self->{'subs_list_cnt'} = 0;
+
+    # The bindings and font specs for these operations have been placed here to
+    # make them accessible to people who might want to customize the
+    # operations.  REF The 'bind.html' file, included in the perlTk FAQ has a
+    # fairly good explanation of the binding syntax.
+
+    #
+    # These lists of key bindings will be applied to the "Step In", "Step Out",
+    # "Return" Commands.
+    #
+    $self->{'pathSep'}            = '\x00';
+    $self->{'pathSepReplacement'} = "\0x01";
+
+    # ALT-B brings up a menu
+    # $self->{'toggle_breakpt_keys = ('<Alt-b>'); # set or unset a breakpoint
+
+    # Fonts used in the displays
+    $self->{'button_font'}
+        = $ENV{'PTKDB_BUTTON_FONT'} ? { "-font" => $ENV{'PTKDB_CODE_FONT'} } : {};    # font for buttons
+    $self->{'code_text_font'}
+        = $ENV{'PTKDB_CODE_FONT'} ? { "-font" => $ENV{'PTKDB_CODE_FONT'} } : {};
+
+    $self->{'expression_text_font'}
+        = $ENV{'PTKDB_EXPRESSION_FONT'} ? { "-font" => $ENV{'PTKDB_EXPRESSION_FONT'} } : {};
+    $self->{'eval_text_font'}
+        = $ENV{'PTKDB_EVAL_FONT'} ? { -font => $ENV{'PTKDB_EVAL_FONT'} } : {};        # text for the expression eval window
+
+    $self->{'eval_dump_indent'} = $ENV{'PTKDB_EVAL_DUMP_INDENT'} || 1;
+
+    #
+    # Windows users are more used to having scroll bars on the right.
+    # If they've set PTKDB_SCROLLBARS_ONRIGHT to a non-zero value
+    # this will configure our scrolled windows with scrollbars on the right
+    #
+    # this can also be done by setting:
+    #
+    # ptkdb*scrollbars: se
+    #
+    # in the .Xdefaults/.Xresources file on X based systems
+    #
+    if (exists $ENV{'PTKDB_SCROLLBARS_ONRIGHT'} && $ENV{'PTKDB_SCROLLBARS_ONRIGHT'}) {
+        $self->{'scrollbar_cfg'} = { '-scrollbars' => 'se' };
+    } else {
+        $self->{'scrollbar_cfg'} = {};
+    }
+
+    #
+    # Controls how far an expression result will be 'decomposed'.   Setting it
+    # to 0 will take it down only one level, setting it to -1 will make it
+    # decompose it all the way down. However, if you have a situation where
+    # an element is a ref   back to the array or a root of the array
+    # you could hang the debugger by making it recursively evaluate an expression
+    #
+
+    $self->{'add_expr_depth'} = 1;    # how much further to expand an expression when clicked
+
+    $self->{'linenumber_format'} = $ENV{'PTKDB_LINENUMBER_FORMAT'} || "%05d ";
+    $self->{'linenumber_length'} = 5;                                                 # If you have more than 99,999 lines
+                                                                                      # in any one file, you're doing
+                                                                                      # something wrong!
+    $self->{'linenumber_offset'} = length sprintf($self->{'linenumber_format'}, 0);
+    $self->{'linenumber_offset'} -= 1;
 
     $self->setup_main_window();
 
@@ -382,71 +440,6 @@ sub BEGIN {
     $DB::subroutine_depth = 0;    # our subroutine depth counter
     $DB::step_over_depth  = -1;
 
-    # The bindings and font specs for these operations have been placed here to
-    # make them accessible to people who might want to customize the
-    # operations.  REF The 'bind.html' file, included in the perlTk FAQ has a
-    # fairly good explanation of the binding syntax.
-
-    #
-    # These lists of key bindings will be applied to the "Step In", "Step Out",
-    # "Return" Commands.
-    #
-    $Devel::ptkdb::pathSep            = '\x00';
-    $Devel::ptkdb::pathSepReplacement = "\0x01";
-
-    # ALT-B brings up a menu
-    # @Devel::ptkdb::toggle_breakpt_keys = ('<Alt-b>'); # set or unset a breakpoint
-
-    # Fonts used in the displays
-    @Devel::ptkdb::button_font
-        = $ENV{'PTKDB_BUTTON_FONT'} ? ("-font" => $ENV{'PTKDB_CODE_FONT'}) : ();    # font for buttons
-    @Devel::ptkdb::code_text_font
-        = $ENV{'PTKDB_CODE_FONT'} ? ("-font" => $ENV{'PTKDB_CODE_FONT'}) : ();
-
-    @Devel::ptkdb::expression_text_font
-        = $ENV{'PTKDB_EXPRESSION_FONT'} ? ("-font" => $ENV{'PTKDB_EXPRESSION_FONT'}) : ();
-    @Devel::ptkdb::eval_text_font
-        = $ENV{'PTKDB_EVAL_FONT'} ? (-font => $ENV{'PTKDB_EVAL_FONT'}) : ();        # text for the expression eval window
-
-    $Devel::ptkdb::eval_dump_indent = $ENV{'PTKDB_EVAL_DUMP_INDENT'} || 1;
-
-    #
-    # Windows users are more used to having scroll bars on the right.
-    # If they've set PTKDB_SCROLLBARS_ONRIGHT to a non-zero value
-    # this will configure our scrolled windows with scrollbars on the right
-    #
-    # this can also be done by setting:
-    #
-    # ptkdb*scrollbars: se
-    #
-    # in the .Xdefaults/.Xresources file on X based systems
-    #
-    if (exists $ENV{'PTKDB_SCROLLBARS_ONRIGHT'} && $ENV{'PTKDB_SCROLLBARS_ONRIGHT'}) {
-        @Devel::ptkdb::scrollbar_cfg = ('-scrollbars' => 'se');
-    } else {
-        @Devel::ptkdb::scrollbar_cfg = ();
-    }
-
-    #
-    # Controls how far an expression result will be 'decomposed'.   Setting it
-    # to 0 will take it down only one level, setting it to -1 will make it
-    # decompose it all the way down. However, if you have a situation where
-    # an element is a ref   back to the array or a root of the array
-    # you could hang the debugger by making it recursively evaluate an expression
-    #
-
-    $Devel::ptkdb::add_expr_depth = 1;    # how much further to expand an expression when clicked
-
-    $Devel::ptkdb::linenumber_format = $ENV{'PTKDB_LINENUMBER_FORMAT'} || "%05d ";
-    $Devel::ptkdb::linenumber_length = 5;                                                     # If you have more than 99,999 lines
-                                                                                              # in any one file, you're doing
-                                                                                              # something wrong!
-    $Devel::ptkdb::linenumber_offset = length sprintf($Devel::ptkdb::linenumber_format, 0);
-    $Devel::ptkdb::linenumber_offset -= 1;
-
-    $Devel::ptkdb::DataDumperAvailable  = ($] >= 5.005 ? 1 : 0);
-    $Devel::ptkdb::useDataDumperForEval = $Devel::ptkdb::DataDumperAvailable;
-
     # DB Options (things not directly involving the window)
 
     # Flag to disable us from intercepting $SIG{'INT'}
@@ -496,36 +489,36 @@ sub DoBugReport {
 sub do_user_init_files {
     my ($self) = @_;
 
-    debug_say(
-        msg    => 'in Initialize, after db_user_init_files()',
-        action => 'trace',
-        dump   => [
-            {   descr => '$_ptkdb_obj',
-                ref   => $self
-            }
-        ]
+    my @init_files = (
+        {   type     => 'system',
+            filename => "$Config{'installprivlib'}/Devel/ptkdbrc"
+        },
+        {   type     => 'user',
+            filename => "$ENV{'HOME'}/.ptkdbrc"
+        },
+        {   type     => 'script',
+            filename => realpath(File::Spec->catfile(dirname($self->{'script_name'}), '.ptkdbrc'))
+        },
+        {   type     => 'local',
+            filename => './.ptkdbrc'
+        }
     );
 
-    eval { do "$Config{'installprivlib'}/Devel/ptkdbrc"; }
-        if -e "$Config{'installprivlib'}/Devel/ptkdbrc";
-
-    if ($@) {
-        print "System init file $Config{'installprivlib'}/ptkdbrc failed: $@\n";
+    for my $init_file (@init_files) {
+        if (!-e $init_file->{filename}) {
+            console_say("No $init_file->{type} init file $init_file->{filename} found.");
+        } else {
+            eval { do "$init_file->{filename}"; };
+            if ($@) {
+                console_say(
+                    ucfirst($init_file->{type}) . " $init_file->{filename} failed to load: $@");
+            } else {
+                console_say(ucfirst($init_file->{type}) . " $init_file->{filename} loaded.");
+            }
+        }
     }
 
-    eval { do "$ENV{'HOME'}/.ptkdbrc"; } if exists $ENV{'HOME'} && -e "$ENV{'HOME'}/.ptkdbrc";
-
-    if ($@) {
-        print "User init file $ENV{'HOME'}/.ptkdbrc failed: $@\n";
-    }
-
-    eval { do ".ptkdbrc"; } if -e ".ptkdbrc";
-
-    if ($@) {
-        print "User init file .ptkdbrc failed: $@\n";
-    }
-
-    &set_stop_on_warning();
+    $self->set_stop_on_warning();
 }
 
 sub setup_main_window {
@@ -614,7 +607,7 @@ sub DoQuit {
     my ($self) = @_;
 
     $self->save_bookmarks($self->{BookMarksPath})
-        if $Devel::ptkdb::DataDumperAvailable && $self->{'bookmarks_changed'};
+        if $self->{'DataDumperAvailable'} && $self->{'bookmarks_changed'};
     $self->{main_window}->destroy if $self->{main_window};
     $self->{main_window} = undef  if defined $self->{main_window};
 
@@ -670,8 +663,8 @@ sub DoOpen {
     $topLevel = $self->{main_window}->Toplevel(-title => "File Select", -overanchor => 'cursor');
 
     $listBox = $topLevel->Scrolled(
-        'Listbox', @Devel::ptkdb::scrollbar_cfg,
-        @Devel::ptkdb::expression_text_font,
+        'Listbox', %{ $self->{'scrollbar_cfg'} },
+        %{ $self->{'expression_text_font'} },
         -width => 30
     )->pack(-side => 'top', -fill => 'both', -expand => 1);
 
@@ -685,12 +678,12 @@ sub DoOpen {
     $topLevel->Button(
         -text    => "Okay",
         -command => $chooseSub,
-        @Devel::ptkdb::button_font,
+        %{ $self->{'button_font'} },
     )->pack(-side => 'left', -fill => 'both', -expand => 1);
 
     $topLevel->Button(
         -text => "Cancel",
-        @Devel::ptkdb::button_font,
+        %{ $self->{'button_font'} },
         -command => sub { destroy $topLevel; }
     )->pack(-side => 'left', -fill => 'both', -expand => 1);
 }
@@ -868,8 +861,8 @@ sub setup_menu_bar_item_control {
         ],
         '-',
         [   'checkbutton' => 'Stop On Warning',
-            -variable     => \$DB::ptkdb::stop_on_warning,
-            -command      => \&set_stop_on_warning
+            -variable     => \$self->{stop_on_warning},
+            -command      => sub { $self->set_stop_on_warning(); }
         ]
 
     ];
@@ -905,7 +898,7 @@ sub setup_menu_bar_item_data {
             -command     => sub { $self->setupEvalWindow(); }
         ],
         [   'checkbutton' => "Use DataDumper for Eval Window?",
-            -variable     => \$Devel::ptkdb::useDataDumperForEval,
+            -variable     => \$self->{'useDataDumperForEval'},
         ]
     ];
     return $items;
@@ -1053,21 +1046,21 @@ sub setup_button_bar {
 
     $self->{stepin_button} = $self->{button_bar}->Button(
         -text, => "Step In",
-        @Devel::ptkdb::button_font,
+        %{ $self->{'button_font'} },
         -command => $self->{shared_callbacks}->{stepInSub}
     );
     $self->{stepin_button}->pack(-side => 'left');
 
     $self->{stepover_button} = $self->{button_bar}->Button(
         -text, => "Step Over",
-        @Devel::ptkdb::button_font,
+        %{ $self->{'button_font'} },
         -command => $self->{shared_callbacks}->{stepOverSub}
     );
     $self->{stepover_button}->pack(-side => 'left');
 
     $self->{return_button} = $self->{button_bar}->Button(
         -text, => "Return",
-        @Devel::ptkdb::button_font,
+        %{ $self->{'button_font'} },
         -command => $self->{shared_callbacks}->{returnSub}
     );
     $self->{return_button}->pack(-side => 'left');
@@ -1075,21 +1068,21 @@ sub setup_button_bar {
     $self->{run_button} = $self->{button_bar}->Button(
         -background => 'green',
         -text,      => "Run",
-        @Devel::ptkdb::button_font,
+        %{ $self->{'button_font'} },
         -command => $self->{shared_callbacks}->{runSub}
     );
     $self->{run_button}->pack(-side => 'left');
 
     $self->{run_to_button} = $self->{button_bar}->Button(
         -text, => "Run To",
-        @Devel::ptkdb::button_font,
+        %{ $self->{'button_font'} },
         -command => $self->{shared_callbacks}->{runToSub}
     );
     $self->{run_to_button}->pack(-side => 'left');
 
     $self->{breakpt_button} = $self->{button_bar}->Button(
         -text, => "Break",
-        @Devel::ptkdb::button_font,
+        %{ $self->{'button_font'} },
         -command => sub { $self->SetBreakPoint; }
     );
     $self->{breakpt_button}->pack(-side => 'left');
@@ -1219,13 +1212,13 @@ sub bookmark_cmd {
 sub save_bookmarks {
     my ($self, $pathName) = @_;
 
-    return unless $Devel::ptkdb::DataDumperAvailable;    # we can't save without the data dumper
+    return unless $self->{'DataDumperAvailable'};    # we can't save without the data dumper
 
     eval {
         open my $F, '>', $pathName || die "open failed";
         my $d = Data::Dumper->new([$self->{'bookmarks'}], ['ptkdb_bookmarks']);
 
-        $d->Indent(2);                                   # make it more editable for people
+        $d->Indent(2);                               # make it more editable for people
 
         my $str;
         if ($d->can('Dumpxs')) {
@@ -1256,7 +1249,7 @@ sub save_bookmarks {
 # depth.  If an item is 'unexpanded' such as
 # a hash or a list, it will expand it one more
 # level.  How much further an item is expanded is
-# controled by package variable $Devel::ptkdb::add_expr_depth
+# controled by variable $add_expr_depth
 #
 sub expr_expand {
     my ($path)    = @_;
@@ -1299,7 +1292,7 @@ sub expr_expand {
         #
         $hl->deleteEntry($root);
         $hl->add($root, -at => $index);
-        $ptkdb_obj->{'expr_list'}->[$index]->{'depth'} += $Devel::ptkdb::add_expr_depth;
+        $ptkdb_obj->{'expr_list'}->[$index]->{'depth'} += $ptkdb_obj->{'add_expr_depth'};
         #
         # Force an update on our expressions
         #
@@ -1359,7 +1352,7 @@ sub change_breakpoint_tag {
     #
     # Change the value of the breakpoint
     #
-    @tagSet = ("$idx.0", "$idx.$Devel::ptkdb::linenumber_length");
+    @tagSet = ("$idx.0", "$idx.$self->{'linenumber_length'}");
 
     $brkpt = &DB::get_breakpoint($self->{'current_file'}, $idx + $self->{'line_offset'});
     return unless $brkpt;
@@ -1465,7 +1458,7 @@ sub sub_list_cmd {
     # split the path up into elements
     # end descend through the tree.
     #
-    $h = $Devel::ptkdb::subs_tree;
+    $h = $self->{'subs_tree'};
     for (split /\./o, $path) {
         $h = $h->{$_};    # next level down
     }
@@ -1502,11 +1495,11 @@ sub fill_subs_page {
 
     my @list = keys %DB::sub;
 
-    $Devel::ptkdb::subs_tree = tree_split(\@list, "::");
+    $self->{'subs_tree'} = tree_split(\@list, "::");
 
     # setup to level of list
 
-    for (sort keys %$Devel::ptkdb::subs_tree) {
+    for (sort keys %{ $self->{'subs_tree'} }) {
         $self->{'sub_list'}->add($_, -text => $_);
     }
 }
@@ -1595,11 +1588,6 @@ sub setup_frames {
     my ($self) = @_;
     my $mw = $self->{'main_window'};
     my ($txt, $place_holder, $frm);
-    require Tk::ROText;
-    require Tk::NoteBook;
-    require Tk::HList;
-    require Tk::Balloon;
-    require Tk::Adjuster;
 
     # get the side that we want to put the code pane on
 
@@ -1616,8 +1604,8 @@ sub setup_frames {
     $self->{'text'} = $frm->Scrolled(
         'ROText',
         -wrap => "none",
-        @Devel::ptkdb::scrollbar_cfg,
-        @Devel::ptkdb::code_text_font
+        %{ $self->{'scrollbar_cfg'} },
+        %{ $self->{'code_text_font'} }
     );
 
     $txt = $self->{'text'};
@@ -1679,9 +1667,9 @@ sub setup_frames {
 
     $self->{data_list} = $self->{'data_page'}->Scrolled(
         'HList',
-        @Devel::ptkdb::scrollbar_cfg,
-        separator => $Devel::ptkdb::pathSep,
-        @Devel::ptkdb::expression_text_font,
+        %{ $self->{'scrollbar_cfg'} },
+        separator => $self->{'pathSep'},
+        %{ $self->{'expression_text_font'} },
         -command    => \&Devel::ptkdb::expr_expand,
         -selectmode => 'multiple'
     );
@@ -1710,10 +1698,10 @@ sub configure_text {
 
     # If Data::Dumper is available setup a dumper for the balloon
 
-    if ($Devel::ptkdb::DataDumperAvailable) {
+    if ($self->{'DataDumperAvailable'}) {
         $self->{'balloon_dumper'} = new Data::Dumper([$place_holder]);
         $self->{'balloon_dumper'}->Terse(1);
-        $self->{'balloon_dumper'}->Indent($Devel::ptkdb::eval_dump_indent);
+        $self->{'balloon_dumper'}->Indent($self->{'eval_dump_indent'});
 
         $self->{'quick_dumper'} = new Data::Dumper([$place_holder]);
         $self->{'quick_dumper'}->Terse(1);
@@ -1889,10 +1877,10 @@ sub insertBreakpoint {
         next unless $fname eq $self->{'current_file'};
 
         $self->{'text'}
-            ->tagRemove("breakableLine", "$index.0", "$index.$Devel::ptkdb::linenumber_length");
+            ->tagRemove("breakableLine", "$index.0", "$index.$self->{'linenumber_length'}");
         $self->{'text'}->tagAdd(
             $value ? "breaksetLine" : "breakdisabledLine",
-            "$index.0", "$index.$Devel::ptkdb::linenumber_length"
+            "$index.0", "$index.$self->{'linenumber_length'}"
         );
     }
 }
@@ -2031,13 +2019,13 @@ sub removeBreakpointTags {
 
         if ($brkpt->{'value'}) {
             $self->{'text'}
-                ->tagRemove("breaksetLine", "$idx.0", "$idx.$Devel::ptkdb::linenumber_length");
+                ->tagRemove("breaksetLine", "$idx.0", "$idx.$self->{'linenumber_length'}");
         } else {
             $self->{'text'}
-                ->tagRemove("breakdisabledLine", "$idx.0", "$idx.$Devel::ptkdb::linenumber_length");
+                ->tagRemove("breakdisabledLine", "$idx.0", "$idx.$self->{'linenumber_length'}");
         }
 
-        $self->{'text'}->tagAdd("breakableLine", "$idx.0", "$idx.$Devel::ptkdb::linenumber_length");
+        $self->{'text'}->tagAdd("breakableLine", "$idx.0", "$idx.$self->{'linenumber_length'}");
     }
 }
 
@@ -2134,10 +2122,11 @@ sub deleteExpr {
 }
 
 sub fixExprPath {
+    my $self = shift;
     my (@pathList) = @_;
 
     for (@pathList) {
-        s/$Devel::ptkdb::pathSep/$Devel::ptkdb::pathSepReplacement/go;
+        s/$self->{'pathSep'}/$self->{'pathSepReplacement'}/go;
     }
 
     return $pathList[0] unless wantarray;
@@ -2215,8 +2204,8 @@ sub insertExpr {
                 eval {
                     $dl->add(
                               $dirPath
-                            . fixExprPath($name)
-                            . $Devel::ptkdb::pathSep
+                            . $self->fixExprPath($name)
+                            . $self->{'pathSep'}
                             . "__ptkdb_self_path"
                             . $selfCnt++,
                         -text => "[$idx] = $r REUSED ADDR"
@@ -2229,7 +2218,7 @@ sub insertExpr {
             push @$reusedRefs, $r;
             $result = $self->insertExpr(
                 $reusedRefs, $dl, $r, "[$idx]", $depth - 1,
-                $dirPath . fixExprPath($name) . $Devel::ptkdb::pathSep
+                $dirPath . $self->fixExprPath($name) . $self->{'pathSep'}
             ) unless $depth == 0;
             pop @$reusedRefs;
 
@@ -2240,7 +2229,7 @@ sub insertExpr {
     }
 
     if ("$theRef" !~ /HASH\050\060x[0-9a-f]*\051/o) {
-        eval { $dl->add($dirPath . fixExprPath($name), -text => "$name = $theRef"); };
+        eval { $dl->add($dirPath . $self->fixExprPath($name), -text => "$name = $theRef"); };
         my $error = $@;
         if ($error) {
             $self->do_alert(msg => "$@");
@@ -2279,8 +2268,8 @@ sub insertExpr {
             eval {
                 $dl->add(
                           $dirPath
-                        . fixExprPath($name)
-                        . $Devel::ptkdb::pathSep
+                        . $self->fixExprPath($name)
+                        . $self->{'pathSep'}
                         . "__ptkdb_self_path"
                         . $selfCnt++,
                     -text => "$theKeys[$idx++] = $r REUSED ADDR"
@@ -2293,12 +2282,12 @@ sub insertExpr {
         push @$reusedRefs, $r;
 
         $result = $self->insertExpr(
-            $reusedRefs,                                 # recursion protection
-            $dl,                                         # data list widget
-            $r,                                          # reference whose value is displayed
-            $theKeys[$idx],                              # name
-            $depth - 1,                                  # remaining expansion depth
-            $dirPath . $name . $Devel::ptkdb::pathSep    # path to add to
+            $reusedRefs,                             # recursion protection
+            $dl,                                     # data list widget
+            $r,                                      # reference whose value is displayed
+            $theKeys[$idx],                          # name
+            $depth - 1,                              # remaining expansion depth
+            $dirPath . $name . $self->{'pathSep'}    # path to add to
         ) unless $depth == 0;
 
         pop @$reusedRefs;
@@ -2371,7 +2360,7 @@ sub set_file {
 
     $text->delete('0.0', 'end');
 
-    my $len = $Devel::ptkdb::linenumber_length;
+    my $len = $self->{'linenumber_length'};
 
     # This is the tightest loop we have in the ptkdb code.  It is here where
     # performance is the most critical.  The map block formats perl code for
@@ -2404,13 +2393,13 @@ sub set_file {
             ($_ != 0 && push @breakableTagList, "$i.0", "$i.$len") || push @nonBreakableTagList,
                 "$i.0", "$i.$len";
 
-            $lineStr = sprintf($Devel::ptkdb::linenumber_format, $i++) . $_;    # line number + text of the line
+            $lineStr = sprintf($self->{'linenumber_format'}, $i++) . $_;    # line number + text of the line
 
-            substr $lineStr, -2, 1, '' if $isWin32;                             # removes the CR from win32 instances
+            substr $lineStr, -2, 1, '' if $isWin32;                         # removes the CR from win32 instances
 
-            $lineStr .= "\n" unless /\n$/o;                                     # append a \n if there isn't one already
+            $lineStr .= "\n" unless /\n$/o;                                 # append a \n if there isn't one already
 
-            ($lineStr, 'code');                                                 # return value for block, a string,tag pair for text insert
+            ($lineStr, 'code');                                             # return value for block, a string,tag pair for text insert
 
         } @{$lines}[$offset + 1 .. $#{$lines}]
     ) unless $noCode;
@@ -2506,7 +2495,7 @@ sub GotoLine {
     $topLevel->Button(
         -text    => "Okay",
         -command => $okaySub,
-        @Devel::ptkdb::button_font,
+        %{ $self->{'button_font'} },
     )->pack(-side => 'left', -fill => 'both', -expand => 1);
 
     #
@@ -2521,7 +2510,7 @@ sub GotoLine {
 
     $topLevel->Button(
         -text => "Dismiss",
-        @Devel::ptkdb::button_font,
+        %{ $self->{'button_font'} },
         -command => $dismissSub
     )->pack(-side => 'left', -fill => 'both', -expand => 1);
 
@@ -2648,7 +2637,7 @@ sub FindText {
     $okayBtn = $top->Button(
         -text    => "Okay",
         -command => sub { $self->FindSearch($self->{find_text}, $okayBtn, $regExp); },
-        @Devel::ptkdb::button_font,
+        %{ $self->{'button_font'} },
     )->pack(-side => 'left', -fill => 'both', -expand => 1);
 
     $self->{find_text}
@@ -2656,7 +2645,7 @@ sub FindText {
 
     $top->Button(
         -text => "Dismiss",
-        @Devel::ptkdb::button_font,
+        %{ $self->{'button_font'} },
         -command => $dismissSub
     )->pack(-side => 'left', -fill => 'both', -expand => 1);
 
@@ -2759,11 +2748,11 @@ sub updateEvalWindow {
 
             $self->{eval_results}->insert('end', hexDump($_));
 
-        } elsif (!$Devel::ptkdb::DataDumperAvailable || !$Devel::ptkdb::useDataDumperForEval) {
+        } elsif (!$self->{'DataDumperAvailable'} || !$self->{'useDataDumperForEval'}) {
             $str = "$_\n";
         } else {
             $d = Data::Dumper->new([$_]);
-            $d->Indent($Devel::ptkdb::eval_dump_indent);
+            $d->Indent($self->{'eval_dump_indent'});
             $d->Terse(1);
             if (Data::Dumper->can('Dumpxs')) {
                 $str = $d->Dumpxs($_);
@@ -2824,8 +2813,8 @@ sub setupEvalWindow {
     $self->{eval_window} = $top;
     $self->{eval_text}   = $top->Scrolled(
         'TextUndo',
-        @Devel::ptkdb::scrollbar_cfg,
-        @Devel::ptkdb::eval_text_font,
+        %{ $self->{'scrollbar_cfg'} },
+        %{ $self->{'eval_text_font'} },
         width  => 50,
         height => 10,
         -wrap  => "none",
@@ -2838,11 +2827,11 @@ sub setupEvalWindow {
 
     $self->{eval_results} = $top->Scrolled(
         'Text',
-        @Devel::ptkdb::scrollbar_cfg,
+        %{ $self->{'scrollbar_cfg'} },
         width  => 50,
         height => 10,
         -wrap  => "none",
-        @Devel::ptkdb::eval_text_font
+        %{ $self->{'eval_text_font'} }
     )->pack(-side => 'top', -fill => 'both', -expand => 1);
 
     my $ptkdb_obj = Devel::ptkdb::obj();
@@ -3020,15 +3009,15 @@ sub retrieve_text_expr {
 
     ($col, $idx) = $self->line_number_from_coord($txt, $coord);
 
-    $offset = $Devel::ptkdb::linenumber_length + 1;    # line number text + 1 space
+    $offset = $self->{'linenumber_length'} + 1;    # line number text + 1 space
 
-    return if $col < $offset;                          # no posting
+    return if $col < $offset;                      # no posting
 
     $col -= $offset;
 
     $data = DB::get_code_line($self->{current_file}, $idx);
 
-    return if (!defined $data || $data eq '0');        # no executable text, no real variable(?)
+    return if (!defined $data || $data eq '0');    # no executable text, no real variable(?)
 
     # if we're sitting over white space, leave
     my $len = length $data;
@@ -3133,32 +3122,29 @@ sub DoRestart {
 
 }
 
-#
-# Enables/Disables the feature where we stop
-# if we've encountered a perl warning such as:
-# "Use of uninitialized value at undef_warn.pl line N"
-#
+# Enables/Disables the feature where we stop if we've encountered a perl
+# warning such as: "Use of uninitialized value at undef_warn.pl line N"
 
 sub stop_on_warning_cb {
-    &$DB::ptkdb::warn_sig_save() if $DB::ptkdb::warn_sig_save;    # call any previously registered warning
-    my $ptkdb_obj = Devel::ptkdb::obj();
-    $ptkdb_obj->do_alert(msg => @_);
-    $DB::single = 1;                                              # forces debugger to stop next time
+    my $self = shift;
+    $self->{warn_sig_save}->() if $self->{warn_sig_save};    # call any previously registered warning
+    $self->do_alert(msg => @_);
+    $DB::single = 1;                                         # forces debugger to stop next time
 }
 
 sub set_stop_on_warning {
+    my $self = shift;
+    if ($self->{stop_on_warning}) {
 
-    if ($DB::ptkdb::stop_on_warning) {
+        return if $self->{warn_sig_save} == \&$self->stop_on_warning_cb;    # prevents recursion
 
-        return if $DB::ptkdb::warn_sig_save == \&stop_on_warning_cb;    # prevents recursion
-
-        $DB::ptkdb::warn_sig_save = $SIG{'__WARN__'} if $SIG{'__WARN__'};
-        $SIG{'__WARN__'} = \&stop_on_warning_cb;
+        $self->{warn_sig_save} = $SIG{'__WARN__'} if $SIG{'__WARN__'};
+        $SIG{'__WARN__'} = \&$self->stop_on_warning_cb;
     } else {
         #
         # Restore any previous warning signal
         #
-        $SIG{'__WARN__'} = $DB::ptkdb::warn_sig_save;
+        $SIG{'__WARN__'} = $self->{warn_sig_save};
     }
 }
 
@@ -3365,7 +3351,7 @@ until the current line has executed.
 
 This feature can be turned on at startup by adding:
 
-$DB::ptkdb::stop_on_warning = 1 ;
+stopOnWarning();
 
 to a .ptkdbrc file
 
