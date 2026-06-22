@@ -31,6 +31,7 @@ use Tk::Table;
 # Project modules
 use Devel::ptkdb::Cmd;
 use Devel::ptkdb::InitAPI;
+use Devel::ptkdb::Playlist;
 use Devel::ptkdb::State;
 
 # ===========================================================================
@@ -51,6 +52,11 @@ our $_ptkdb_obj_is_being_built = 0;    # Needs to be 'our' so we can 'local'
                                        # it.
 my $isWin32 = $^O eq 'MSWin32';
 
+my $dumpFunc = (
+    Data::Dumper->can('Dumpxs')
+    ? 'Dumpxs'
+    : 'Dump'
+);
 # ===========================================================================
 # Object static methods
 
@@ -149,7 +155,7 @@ sub debug_say {
         qq(\n),
         '',
         _console_prompt(%args),
-        Data::Dumper->Dump([$dump], [qw(*dumped_data)])
+        Data::Dumper->$dumpFunc([$dump], [qw(*dumped_data)])
     );
 
     for ($args{action}) {
@@ -224,23 +230,29 @@ sub new {
     # Handles .ptkdb file saves and loads.
     $self->{state_manager} = Devel::ptkdb::State->new(ptkdb_obj => $self);
     $self->{script_name}   = $0;
-    $self->{script_args}   = [@ARGV];                                        # copy args
-    $self->{expr_depth}    = -1;
+    # copy args, don't point at them
+    $self->{script_args} = [@ARGV];
 
-    $self->{DisableOnLeave} = [];                                            # List o' Widgets to disable when leaving the debugger
+    # List o' Widgets to disable when leaving the debugger
+    $self->{DisableOnLeave} = [];
 
-    $self->{current_file}      = "";
-    $self->{current_line}      = -1;                                         # initial value indicating we haven't set our line/tag
-    $self->{window_pos_offset} = 10;                                         # when we enter how far from the top of the text are we positioned down
+    $self->{current_file} = q();
+    # initial value indicating we haven't set our line/tag
+    $self->{current_line} = -1;
+    # when we enter how far from the top of the text are we positioned down
+    $self->{window_pos_offset} = 10;
     $self->{search_start}      = "0.0";
     $self->{fwdOrBack}         = 1;
     $self->{BookMarksPath}
         = $ENV{'PTKDB_BOOKMARKS_PATH'} || "$ENV{'HOME'}/.ptkdb_bookmarks" || '.ptkdb_bookmarks';
 
-    $self->{'expr_list'} = [];                                               # list of expressions to eval in our window fields:  {'expr'} The expr itself {'depth'} expansion depth
+    # list of expressions to eval in our window fields: {'expr'} The expr
+    # itself {'depth'} expansion depth
+    $self->{'expr_list'} = [];
 
-    $self->{'brkpt_cnt'}   = 0;
-    $self->{'brkpt_slots'} = [];                                             # open slots for adding breakpoints to the table
+    $self->{'brkpt_cnt'} = 0;
+    # open slots for adding breakpoints to the table
+    $self->{'brkpt_slots'} = [];
 
     $self->{'user_window_init_list'}     = [];
     $self->{'user_window_DB_entry_list'} = [];
@@ -249,17 +261,27 @@ sub new {
 
     $self->{'pathSep'}            = '\x00';
     $self->{'pathSepReplacement'} = "\0x01";
+    $self->{'step_in_keys'}       = ['<Shift-F9>', '<Alt-s>'];    # step into a subroutine
+    $self->{'step_over_keys'}     = ['<F9>',       '<Alt-n>'];    # step over a subroutine
+    $self->{'return_keys'}        = ['<Alt-u>'];                  # return from a subroutine
+
+    # These will be bound only to the code pane, so that other widgets can have
+    # Their own popup menus
+    $self->{'step_in_mouse'}       = ['<Button-3>'];            # step into a subroutine
+    $self->{'step_over_mouse'}     = ['<Shift-Button-3>'];      # step over a subroutine
+    $self->{'return_mouse'}        = ['<Control-Button-3>'];    # return from a subroutine
+    $self->{'toggle_breakpt_keys'} = ['<Alt-b>'];               # set or unset a breakpoint
 
     # Fonts used in the displays
     $self->{'button_font'}
-        = $ENV{'PTKDB_BUTTON_FONT'} ? { "-font" => $ENV{'PTKDB_CODE_FONT'} } : {};    # font for buttons
+        = $ENV{'PTKDB_BUTTON_FONT'} ? { "-font" => $ENV{'PTKDB_CODE_FONT'} } : {};
     $self->{'code_text_font'}
         = $ENV{'PTKDB_CODE_FONT'} ? { "-font" => $ENV{'PTKDB_CODE_FONT'} } : {};
 
     $self->{'expression_text_font'}
         = $ENV{'PTKDB_EXPRESSION_FONT'} ? { "-font" => $ENV{'PTKDB_EXPRESSION_FONT'} } : {};
     $self->{'eval_text_font'}
-        = $ENV{'PTKDB_EVAL_FONT'} ? { -font => $ENV{'PTKDB_EVAL_FONT'} } : {};        # text for the expression eval window
+        = $ENV{'PTKDB_EVAL_FONT'} ? { -font => $ENV{'PTKDB_EVAL_FONT'} } : {};
 
     $self->{'eval_dump_indent'} = $ENV{'PTKDB_EVAL_DUMP_INDENT'} || 1;
 
@@ -280,20 +302,18 @@ sub new {
         $self->{'scrollbar_cfg'} = {};
     }
 
-    #
-    # Controls how far an expression result will be 'decomposed'.   Setting it
+    # Controls how far an expression result will be 'decomposed'.  Setting it
     # to 0 will take it down only one level, setting it to -1 will make it
-    # decompose it all the way down. However, if you have a situation where
-    # an element is a ref   back to the array or a root of the array
-    # you could hang the debugger by making it recursively evaluate an expression
-    #
-
+    # decompose it all the way down. However, if you have a situation where an
+    # element is a ref back to the array or a root of the array you could hang
+    # the debugger by making it recursively evaluate an expression
+    $self->{expr_depth}       = -1;
     $self->{'add_expr_depth'} = 1;    # how much further to expand an expression when clicked
 
     $self->{'linenumber_format'} = $ENV{'PTKDB_LINENUMBER_FORMAT'} || "%05d ";
-    $self->{'linenumber_length'} = 5;                                                 # If you have more than 99,999 lines
-                                                                                      # in any one file, you're doing
-                                                                                      # something wrong!
+    # If you have more than 99,999 lines in any one file, you're doing
+    # something wrong!
+    $self->{'linenumber_length'} = 5;
     $self->{'linenumber_offset'} = length sprintf($self->{'linenumber_format'}, 0);
     $self->{'linenumber_offset'} -= 1;
 
@@ -440,7 +460,6 @@ sub BEGIN {
     # DB Options (things not directly involving the window)
 
     # Flag to disable us from intercepting $SIG{'INT'}
-
     {
         no warnings 'once';
         $DB::sigint_disable = defined $ENV{'PTKDB_SIGINT_DISABLE'} && $ENV{'PTKDB_SIGINT_DISABLE'};
@@ -604,7 +623,7 @@ sub DoQuit {
     my ($self) = @_;
 
     $self->save_bookmarks($self->{BookMarksPath})
-        if $self->{'DataDumperAvailable'} && $self->{'bookmarks_changed'};
+        if $self->{'bookmarks_changed'};
     $self->{main_window}->destroy if $self->{main_window};
     $self->{main_window} = undef  if defined $self->{main_window};
 
@@ -621,7 +640,6 @@ sub DoQuit {
 sub DoOpen {
     my $self = shift;
     my ($topLevel, $listBox, $frame, $selectedFile, @fList);
-    my $ptkdb_obj = Devel::ptkdb::obj();
 
     #
     # subroutine we call when we've selected a file
@@ -630,7 +648,7 @@ sub DoOpen {
     my $chooseSub = sub {
         $selectedFile = $listBox->get('active');
         print "attempting to open $selectedFile\n";
-        $ptkdb_obj->set_file($selectedFile, 0);
+        $self->set_file($selectedFile, 0);
         destroy $topLevel;
     };
 
@@ -710,10 +728,8 @@ sub do_tabs {
 
 sub close_ptkdb_window {
     my ($self) = @_;
-
-    my $ptkdb_obj = Devel::ptkdb::obj();
-    $ptkdb_obj->{'event'} = 'run';
-    $self->{current_file} = "";      # force a file reset
+    $self->{'event'}      = 'run';
+    $self->{current_file} = q();     # force a file reset
     $self->{'main_window'}->destroy;
     $self->{'main_window'} = undef;
 }
@@ -870,14 +886,24 @@ sub setup_menu_bar_item_data {
     my ($self) = @_;
 
     my $mw = $self->{main_window};
-    $mw->bind('<Alt-e>'     => sub { $self->EnterExpr() });
+    # Set up the stated accelerators...
+    $mw->bind('<Alt-e>'     => sub { $self->enterExpr() });
     $mw->bind('<Control-d>' => sub { $self->deleteExpr() });
+
+    # When we were using an Hlist (version 1.1091), <Delete> wasn't mapped and
+    # didn't cause any change to the expressions displayed. When we cut over to
+    # a Devel::ptkdb::Playlist, the <Delete> key was mapped by
+    # Devel::ptkdb::Playlist but it didn't pass back the highlighted entry. The
+    # result was an entry that disappeared off the screen, but not from our
+    # data structures, so it reappeared after the next line was stepped. So, we
+    # are mappping to trap and gracefully handle it.
+    $mw->bind('<Delete>' => sub { $self->deleteExpr(); });
     $mw->bind('<F8>', sub { $self->setupEvalWindow(); });
 
     my $items = [
         [   'command'    => 'Enter Expression',
             -accelerator => 'Alt+E',
-            -command     => sub { $self->EnterExpr() }
+            -command     => sub { $self->enterExpr() }
         ],
         [   'command'    => 'Delete Expression',
             -accelerator => 'Ctrl+D',
@@ -894,10 +920,8 @@ sub setup_menu_bar_item_data {
             -accelerator => 'F8',
             -command     => sub { $self->setupEvalWindow(); }
         ],
-        [   'checkbutton' => "Use DataDumper for Eval Window?",
-            -variable     => \$self->{'useDataDumperForEval'},
-        ]
     ];
+
     return $items;
 }
 
@@ -1008,9 +1032,7 @@ sub setup_menu_bar {
         -padx => 2
     );
 
-    #
     # Bookmarks menu
-    #
     $self->{bookmarks_menu} = $mb->Menubutton(
         -text      => 'Bookmarks',
         -underline => 0,
@@ -1020,9 +1042,7 @@ sub setup_menu_bar {
     );
     $self->setup_menu_bar_item_bookmarks();
 
-    #
     # Windows Menu
-    #
     $mb->Menubutton(
         -text      => 'Windows',
         -menuitems => $self->setup_menu_bar_item_windows
@@ -1209,21 +1229,12 @@ sub bookmark_cmd {
 sub save_bookmarks {
     my ($self, $pathName) = @_;
 
-    return unless $self->{'DataDumperAvailable'};    # we can't save without the data dumper
-
     eval {
         open my $F, '>', $pathName || die "open failed";
-        my $d = Data::Dumper->new([$self->{'bookmarks'}], ['ptkdb_bookmarks']);
-
-        $d->Indent(2);                               # make it more editable for people
-
-        my $str;
-        if ($d->can('Dumpxs')) {
-            $str = $d->Dumpxs();
-        } else {
-            $str = $d->Dump();
-        }
-
+        my $str
+            = Data::Dumper->new([$self->{'bookmarks'}], ['ptkdb_bookmarks'])
+            ->Indent(2)
+            ->$dumpFunc();
         print $F $str || die "Saving bookmarks failed: $!";
         close($F);
     };
@@ -1239,61 +1250,70 @@ sub save_bookmarks {
 }
 
 #
-# This is our callback from a double click in our
-# HList.  A click in an expanded item will delete
-# the children beneath it, and the next time it
-# updates, it will only update that entry to that
-# depth.  If an item is 'unexpanded' such as
-# a hash or a list, it will expand it one more
-# level.  How much further an item is expanded is
-# controled by variable $add_expr_depth
+# This is our callback from a double click in our Playlist.  A click in an
+# expanded item will delete the children beneath it, and the next time it
+# updates, it will only update that entry to that depth.  If an item is
+# 'unexpanded' such as a hash or a list, it will expand it one more level.  How
+# much further an item is expanded is controlled by variable $add_expr_depth.
 #
 sub expr_expand {
-    my ($path)    = @_;
-    my $ptkdb_obj = Devel::ptkdb::obj();
-    my $hl        = $ptkdb_obj->{'data_list'};
+    my $self   = shift;
+    my ($path) = @_;
+    my $l      = $self->{'data_list'};
     my ($parent, $root, $index, @children, $depth);
 
     $parent = $path;
     $root   = $path;
     $depth  = 0;
 
-    for ($root = $path; defined $parent && $parent ne ""; $parent = $hl->infoParent($root)) {
+    for ($root = $path; defined $parent && $parent ne q(); $parent = $l->infoParent($root)) {
         $root = $parent;
         $depth += 1;
     }
 
-    #
     # Determine the index of the root of our expression
-    #
     $index = 0;
-    for (@{ $ptkdb_obj->{'expr_list'} }) {
+    for (@{ $self->{'expr_list'} }) {
         last if $_->{'expr'} eq $root;
         $index += 1;
     }
 
-    #
-    # if we have children we're going to delete them
-    #
-
-    @children = $hl->infoChildren($path);
+    # If we have children we're going to delete them
+    @children = $l->infoChildren($path);
 
     if (scalar @children > 0) {
-
-        $hl->deleteOffsprings($path);
-
-        $ptkdb_obj->{'expr_list'}->[$index]->{'depth'} = $depth - 1;    # adjust our depth
+        $l->deleteOffsprings($path);
+        $self->{'expr_list'}->[$index]->{'depth'} = $depth - 1;    # adjust our depth
     } else {
-        #
         # Delete the existing tree and insert a new one
-        #
-        $hl->deleteEntry($root);
-        $hl->add($root, -at => $index);
-        $ptkdb_obj->{'expr_list'}->[$index]->{'depth'} += $ptkdb_obj->{'add_expr_depth'};
-        #
+        $l->deleteEntry($root);
+        $l->add($root, -at => $index);
+        $self->{'expr_list'}->[$index]->{'depth'} += $self->{'add_expr_depth'};
+
         # Force an update on our expressions
-        #
-        $ptkdb_obj->{'event'} = 'update';
+        $self->{'event'} = 'update';
+    }
+}
+
+# This is our callback for moving an entry in the Playlist. Once were
+# done moving the item, we refresh our data structure from the widget.
+
+sub expr_move {
+    my $self = shift;
+    my ($widget, $action, $path, $newIndex) = @_;
+
+    if ($action eq 'done_moving') {
+        # Index by the path on screen...
+        my %expr_hash = map { $_->{expr}, $_ } @{ $self->{'expr_list'} };
+
+        # ...so we can resort by the screen order...
+        $self->{'expr_list'}
+            = [grep {defined} map { $expr_hash{$_} } $self->{'data_list'}->infoChildren()];
+
+        # ...and force an update on our expressions, so that after the
+        # chosen entry is dropped in its new position, it re-opens to
+        # its prior displayed depth
+        $self->{'event'} = 'update';
     }
 }
 
@@ -1304,16 +1324,10 @@ sub line_number_from_coord {
     $index = $txtWidget->index($coord);
 
     # index is in the format of lineno.column
-
     $index =~ /([0-9]*)\.([0-9]*)/o;
 
-    #
-    # return a list of (col, line).  Why
-    # backwards?
-    #
-
+    # return a list of (col, line).  Why backwards?
     return ($2, $1);
-
 }
 
 # =============================================================================
@@ -1588,11 +1602,10 @@ sub setup_frames {
 
     # get the side that we want to put the code pane on
 
-    my ($codeSide) = $ENV{'PTKDB_CODE_SIDE'} || $mw->optionGet("codeside", "") || 'left';
+    my ($codeSide) = $ENV{'PTKDB_CODE_SIDE'} || $mw->optionGet("codeside", q()) || 'left';
 
     $mw->update;                                     # force geometry manager to map main_window
     $frm = $mw->Frame(-width => $mw->reqwidth());    # frame for our code pane and search controls
-
     $self->setup_search_panel($frm, -side => 'top', -fill => 'x');
 
     #
@@ -1610,6 +1623,18 @@ sub setup_frames {
         next unless (ref $_) =~ /ROText$/;
         $self->{'text'} = $_;
         last;
+    }
+
+    for ($self->{'step_over_mouse'}) {
+        $txt->bind($_ => sub { $self->{'shared_callbacks'}->{'stepOverSub'}; });
+    }
+
+    for ($self->{'step_in_mouse'}) {
+        $txt->bind($_ => sub { $self->{'shared_callbacks'}->{'stepInSub'}; });
+    }
+
+    for ($self->{'return_mouse'}) {
+        $txt->bind($_ => sub { $self->{'shared_callbacks'}->{'returnSub'}; });
     }
 
     $frm->packPropagate(0);
@@ -1632,7 +1657,7 @@ sub setup_frames {
     $self->{'notebook'}->pack(-side => $codeSide, -fill => 'both', -expand => 1);
 
     #
-    # an hlist for the data entries
+    # tab for the data entries
     #
     $self->{'data_page'} = $self->{'notebook'}->add("datapage", -label => "Exprs");
 
@@ -1640,47 +1665,64 @@ sub setup_frames {
     # frame, entry and label for quick expressions
     #
     my $frame = $self->{'data_page'}->Frame()->pack(-side => 'top', -fill => 'x');
-
     my $label = $frame->Label(-text => "Quick Expr:")->pack(-side => 'left');
-
     $self->{'quick_entry'} = $frame->Entry()->pack(-side => 'left', -fill => 'x', -expand => 1);
-
-    $self->{'quick_entry'}->bind('<Return>', sub { $self->QuickExpr(); });
+    $self->{'quick_entry'}->bind('<Return>', sub { $self->quickExpr(); });
 
     #
     # Entry widget for expressions and breakpoints
     #
-    $frame = $self->{'data_page'}->Frame()->pack(-side => 'top', -fill => 'x');
-
-    $label = $frame->Label(-text => "Enter Expr:")->pack(-side => 'left');
-
+    $frame           = $self->{'data_page'}->Frame()->pack(-side => 'top', -fill => 'x');
+    $label           = $frame->Label(-text => "Enter Expr:")->pack(-side => 'left');
     $self->{'entry'} = $frame->Entry()->pack(-side => 'left', -fill => 'x', -expand => 1);
+    $self->{'entry'}->bind('<Return>', sub { $self->enterExpr() });
 
-    $self->{'entry'}->bind('<Return>', sub { $self->EnterExpr() });
+=for obsolete
 
     #
     # Hlist for data expressions
     #
-
     $self->{data_list} = $self->{'data_page'}->Scrolled(
         'HList',
         %{ $self->{'scrollbar_cfg'} },
         separator => $self->{'pathSep'},
         %{ $self->{'expression_text_font'} },
-        -command    => \&Devel::ptkdb::expr_expand,
+        -command    =>  sub { $self->expr_expand() },
         -selectmode => 'multiple'
     );
-
     $self->{data_list}->pack(
         -side   => 'top',
         -fill   => 'both',
         -expand => 1
     );
 
-    $self->{'subs_page_activated'} = 0;
-    $self->{'subs_page'}           = $self->{'notebook'}
-        ->add("subspage", -label => "Subs", -createcmd => sub { $self->setup_subs_page });
+=cut
 
+    #
+    # Playlist (HList with drag-n-drop) for data expressions
+    #
+    $self->{data_list} = $self->{data_page}->Scrolled(
+        'Playlist',
+        %{ $self->{'scrollbar_cfg'} },
+        -separator => $self->{'pathSep'},
+        %{ $self->{'expression_text_font'} },
+        -command         => sub { $self->expr_expand(@_) },
+        -callback_change => sub { $self->expr_move(@_); }
+    );
+    $self->{data_list}->pack(-side => 'top', -fill => 'both', -expand => 1);    #
+
+    # tab for code call hierarchy. All modules are presented, including the
+    # ones for THIS DEBUGGER. Which means you can debug the debugger while
+    # running the debugger. Wow.
+    $self->{'subs_page_activated'} = 0;
+    $self->{'subs_page'}           = $self->{'notebook'}->add(
+        "subspage", -label => "Subs",
+        -createcmd => sub { $self->setup_subs_page }
+    );
+
+    #
+    # breakpoints
+    #
     $self->setup_breakpts_page();
 
 }
@@ -1691,19 +1733,16 @@ sub configure_text {
     my ($place_holder);
 
     $self->{'expr_balloon'} = $txt->Balloon();
-    $self->{'balloon_expr'} = ' ';               # initial expression
+    # initial expression
+    $self->{'balloon_expr'} = ' ';
 
-    # If Data::Dumper is available setup a dumper for the balloon
+    $self->{'balloon_dumper'} = new Data::Dumper([$place_holder]);
+    $self->{'balloon_dumper'}->Terse(1);
+    $self->{'balloon_dumper'}->Indent($self->{'eval_dump_indent'});
 
-    if ($self->{'DataDumperAvailable'}) {
-        $self->{'balloon_dumper'} = new Data::Dumper([$place_holder]);
-        $self->{'balloon_dumper'}->Terse(1);
-        $self->{'balloon_dumper'}->Indent($self->{'eval_dump_indent'});
-
-        $self->{'quick_dumper'} = new Data::Dumper([$place_holder]);
-        $self->{'quick_dumper'}->Terse(1);
-        $self->{'quick_dumper'}->Indent(0);
-    }
+    $self->{'quick_dumper'} = new Data::Dumper([$place_holder]);
+    $self->{'quick_dumper'}->Terse(1);
+    $self->{'quick_dumper'}->Indent(0);
 
     $self->{'expr_ballon_msg'} = ' ';
 
@@ -1712,8 +1751,8 @@ sub configure_text {
         -initwait        => 300,
         -msg             => \$self->{'expr_ballon_msg'},
         -balloonposition => 'mouse',
-        -postcommand     => \&Devel::ptkdb::balloon_post,
-        -motioncommand   => \&Devel::ptkdb::balloon_motion
+        -postcommand     => sub { $self->balloon_post(@_) },
+        -motioncommand   => sub { $self->balloon_motion(@_); }
     );
 
     # tags for the text
@@ -1794,9 +1833,18 @@ sub setup_options {
 
 }
 
+sub simpleGeo {
+    my ($self) = @_;
+    my @main_geo = grep {m/[0-9]/} split(/([x+-])/, $self->{main_window}->geometry());
+    my $simple_loc
+        = (   '+'
+            . int($main_geo[2] + ($main_geo[0] * .05)) . '+'
+            . int($main_geo[3] + ($main_geo[1] * .05)));
+    return ($simple_loc);
+}
+
 sub get_entry_text {
     my ($self) = @_;
-
     return $self->{entry}->get();    # get the text in the entry
 }
 
@@ -1815,7 +1863,7 @@ sub clear_entry_text {
     # Empty String
     # Or a string that is only whitespace
     #
-    if (!$str || $str eq "" || $str =~ /^\s+$/) {
+    if (!$str || $str eq q() || $str =~ /^\s+$/) {
         #
         # If there is no string or the string is just white text
         # Get the text in the selction( if any)
@@ -1824,9 +1872,9 @@ sub clear_entry_text {
             $str = $self->{'text'}->get("sel.first", "sel.last");    # get the text between the 'first' and 'last' point of the sel (selection) tag
         }
         # If still no text, bring the focus to the entry
-        elsif (!$str || $str eq "" || $str =~ /^\s+$/) {
+        elsif (!$str || $str eq q() || $str =~ /^\s+$/) {
             $self->{'entry'}->focus();
-            $str = "";
+            $str = q();
         }
     }
     #
@@ -1844,16 +1892,13 @@ sub brkpt_checkbutton {
 
 }
 
+# Insert a breakpoint control into our breakpoint list.  Returns a handle to
+# the control.
 #
-# insert a breakpoint control into our breakpoint list.
-# returns a handle to the control
+# Expression, if defined, is to be evaluated at the breakpoint and execution
+# stopped if it is non-zero/defined.
 #
-# Expression, if defined, is to be evaluated at the breakpoint
-# and execution stopped if it is non-zero/defined.
-#
-# If action is defined && True then it will be evalled
-# before continuing.
-#
+# If action is defined && True then it will be eval'ed before continuing.
 sub insertBreakpoint {
     my ($self, $fname, @brks) = @_;
     my ($btn, $cnt, $item);
@@ -1868,7 +1913,7 @@ sub insertBreakpoint {
         @$brkpt{ 'type', 'line', 'expr', 'value', 'fname', 'text' }
             = ('user', $index, $expression, $value, $fname, "$txt");
 
-        &DB::set_breakpoint($fname, $index + $offset, $brkpt);
+        DB::set_breakpoint($fname, $index + $offset, $brkpt);
         $self->add_brkpt_to_brkpt_page($brkpt);
 
         next unless $fname eq $self->{'current_file'};
@@ -1886,6 +1931,7 @@ sub add_brkpt_to_brkpt_page {
     my ($self, $brkpt) = @_;
     my ($btn,  $fname,   $index, $frm, $upperFrame, $lowerFrame);
     my ($row,  $btnName, $width);
+
     #
     # Add the breakpoint to the breakpoints page
     #
@@ -1896,17 +1942,16 @@ sub add_brkpt_to_brkpt_page {
     $btnName = $fname;
     $btnName =~ s/.*\/([^\/]*)$/$1/o;
 
-    # take the last leaf of the pathname
-
+    # Take the last leaf of the pathname.
     $frm        = $self->{'breakpts_table'}->Frame(-relief => 'raised');
     $upperFrame = $frm->Frame()->pack(-side => 'top', '-fill' => 'x', -expand => 1);
 
     $btn = $upperFrame->Checkbutton(
-        -text     => "$btnName:$index",
-        -variable => \$brkpt->{'value'},                                        # CAUTION value tracking
+        -text => "$btnName:$index",
+        # CAUTION value tracking
+        -variable => \$brkpt->{'value'},
         -command  => sub { $self->brkpt_checkbutton($fname, $index, $brkpt) }
     );
-
     $btn->pack(-side => 'left');
 
     $btn = $upperFrame->Button(
@@ -1922,7 +1967,6 @@ sub add_brkpt_to_brkpt_page {
     $btn->pack(-side => 'left', -fill => 'x', -expand => 1);
 
     $lowerFrame = $frm->Frame()->pack(-side => 'top', '-fill' => 'x', -expand => 1);
-
     $lowerFrame->Label(-text => "Cond:")->pack(-side => 'left');
 
     $btn = $lowerFrame->Entry(-textvariable => \$brkpt->{'expr'});
@@ -1944,7 +1988,6 @@ sub add_brkpt_to_brkpt_page {
     if ($width > $self->{'breakpts_table'}->width) {
         $self->{'notebook'}->configure(-width => $width);
     }
-
 }
 
 sub remove_brkpt_from_brkpt_page {
@@ -1954,21 +1997,13 @@ sub remove_brkpt_from_brkpt_page {
     $table = $self->{'breakpts_table'};
 
     # Delete the breakpoint control in the breakpoints window
-
     $table->put($self->{'breakpts_table_data'}->{"$fname:$idx"}->{'row'}, 1);    # delete?
 
-    #
     # Add this now empty slot to the list of ones we have open
-    #
-
     push @{ $self->{'brkpt_slots'} }, $self->{'breakpts_table_data'}->{"$fname:$idx"}->{'row'};
-
     $self->{'brkpt_slots'} = [sort { $b <=> $a } @{ $self->{'brkpt_slots'} }];
-
     delete $self->{'breakpts_table_data'}->{"$fname:$idx"};
-
     $self->{'brkpt_cnt'} -= 1;
-
 }
 
 #
@@ -1978,32 +2013,24 @@ sub insertTempBreakpoint {
     my ($self, $fname, $index) = @_;
 
     my $offset = DB::debugger_injected_line_offset($fname);
-
     return if (&DB::get_breakpoint($fname, $index + $offset));    # we already have a breakpoint here
-
     &DB::set_breakpoint(
         $fname, $index + $offset,
         { 'type' => 'temp', 'line' => $index, 'value' => 1 }
     );
-
 }
 
 sub reinsertBreakpoints {
     my ($self, $fname) = @_;
 
     for my $brkpt (&DB::get_breakpoints($fname)) {
-        #
-        # Our breakpoints are indexed by line
-        # therefore we can have 'gaps' where there
-        # lines, but not breaks set for them.
-        #
+        # Our breakpoints are indexed by line therefore we can have 'gaps'
+        # where there lines, but not breaks set for them.
         next unless defined $brkpt;
-
-        $self->insertBreakpoint($fname, @$brkpt{ 'line', 'value', 'expr' })
+        $self->insertBreakpoint($fname, @$brkpt{qw(line value expr)})
             if ($brkpt->{'type'} eq 'user');
         $self->insertTempBreakpoint($fname, $brkpt->{line}) if ($brkpt->{'type'} eq 'temp');
     }
-
 }
 
 sub removeBreakpointTags {
@@ -2011,17 +2038,11 @@ sub removeBreakpointTags {
     my ($idx);
 
     for my $brkpt (@brkpts) {
-
         $idx = $brkpt->{'line'};
-
-        if ($brkpt->{'value'}) {
-            $self->{'text'}
-                ->tagRemove("breaksetLine", "$idx.0", "$idx.$self->{'linenumber_length'}");
-        } else {
-            $self->{'text'}
-                ->tagRemove("breakdisabledLine", "$idx.0", "$idx.$self->{'linenumber_length'}");
-        }
-
+        $self->{text}->tagRemove(
+            ($brkpt->{value} ? 'breaksetLine' : 'breakdisabledLine'),
+            "$idx.0", "$idx.$self->{'linenumber_length'}"
+        );
         $self->{'text'}->tagAdd("breakableLine", "$idx.0", "$idx.$self->{'linenumber_length'}");
     }
 }
@@ -2039,25 +2060,21 @@ sub removeBreakpoint {
         next unless defined $idx;
         my $brkpt = &DB::get_breakpoint($fname, $idx + $offset);
         next unless $brkpt;    # if we do not have an entry
-        &DB::clear_breakpoint_info($fname, $idx + $offset);
 
+        DB::clear_breakpoint_info($fname, $idx + $offset);
         $self->remove_brkpt_from_brkpt_page($fname, $idx);
-
-        next unless $brkpt->{fname} eq $self->{'current_file'};    # if this isn't our current file there will be no controls
+        # if this isn't our current file there will be no controls
+        next unless $brkpt->{fname} eq $self->{'current_file'};
 
         # Delete the ext associated with the breakpoint expression (if any)
-
         $self->removeBreakpointTags($brkpt);
     }
-
     return;
 }
 
 sub removeAllBreakpoints {
     my ($self, $fname) = @_;
-
     $self->removeBreakpoint($fname, &DB::get_breakpoint_indexes($fname));
-
 }
 
 #
@@ -2068,24 +2085,21 @@ sub deleteAllExprs {
     $self->{'data_list'}->delete('all');
 }
 
-sub EnterExpr {
+sub enterExpr {
     my ($self) = @_;
     my $str = $self->clear_entry_text();
-    if ($str && $str ne "" && $str !~ /^\s+$/) {    # if there is an expression and it's more than white space
+    if ($str && $str ne q() && $str !~ /^\s+$/) {    # if there is an expression and it's more than white space
         $self->{'expr'}  = $str;
         $self->{'event'} = 'expr';
     }
 }
 
-#
-#
-#
-sub QuickExpr {
+sub quickExpr {
     my ($self) = @_;
 
     my $str = $self->{'quick_entry'}->get();
 
-    if ($str && $str ne "" && $str !~ /^\s+$/) {    # if there is an expression and it's more than white space
+    if ($str && $str ne q() && $str !~ /^\s+$/) {    # if there is an expression and it's more than white space
         $self->{'qexpr'} = $str;
         $self->{'event'} = 'qexpr';
     }
@@ -2094,53 +2108,67 @@ sub QuickExpr {
 sub deleteExpr {
     my ($self) = @_;
     my ($i, @indexes);
-    my @sList = $self->{'data_list'}->info('select');
 
-    #
-    # if we're deleteing a top level expression
-    # we have to take it out of the list of expressions
-    #
+    # There are the highlighted entries, the ones we want to
+    # delete. You can select more than one contiguous entry.
+    my @selectedList = $self->{'data_list'}->info('select');
 
-    for my $entry (@sList) {
-        next if ($entry =~ /\//);    # goto next expression if we're not a top level ( expr/entry)
-        $i = 0;
-        grep { push @indexes, $i if ($_->{'expr'} eq $entry); $i++; } @{ $self->{'expr_list'} };
+    # These are the highlighted entries that are actually deleteable;
+    # you cannot remove members of a hash or elements of an array.
+    my @verifiedList;
+
+    # Our list of all expressions. If any are arrays or hashes, we
+    # only have the top-level expression, not any sub-expressions.
+    my @exprList = @{ $self->{expr_list} };
+
+    # Key search and delete is quicker than comparisons in multiple
+    # loops over multiples arrays below.
+    my $exprIdx  = 0;
+    my %exprHash = map { $_->{expr} => $exprIdx++ } @exprList;
+
+    # We have to make sure that each selection is not part of a data
+    # structure; if a particular key/value of a hash or a member of
+    # an array was highlighted (either explicitly or because its top
+    # level entry was expanded and selected over while grabbing more
+    # than one expression), we have to skip over it.
+    foreach my $entry (@selectedList) {
+        next if (not exists($exprHash{$entry}));    # TODO - 2014/03/10 - status message here?
+        delete $exprHash{$entry};                   # We are deleting the entry here...
+        push @verifiedList, $entry;
     }
 
-    # now take out our list of indexes ;
+    if (@verifiedList) {
+        # ...so all that's left in %exprHash here are the entries we want
+        # to keep and, conveniently, their index values, useful for a
+        # slicing operation.
+        @exprList = @exprList[sort { $a <=> $b } values(%exprHash)];
+        $self->{expr_list} = \@exprList;
 
-    for (0 .. $#indexes) {
-        splice @{ $self->{'expr_list'} }, $indexes[$_] - $_, 1;
-    }
-
-    for (@sList) {
-        $self->{'data_list'}->delete('entry', $_);
+        # Now update the widget.
+        for (@verifiedList) {
+            $self->{data_list}->delete('entry', $_);
+        }
     }
 }
 
 sub fixExprPath {
     my $self = shift;
     my (@pathList) = @_;
-
     for (@pathList) {
         s/$self->{'pathSep'}/$self->{'pathSepReplacement'}/go;
     }
-
-    return $pathList[0] unless wantarray;
-    return @pathList;
-
+    return wantarray ? @pathList : $pathList[0];
 }
 
-#
 # Inserts an expression($theRef) into an HList Widget($dl).  If the expression
 # is an array, blessed array, hash, or blessed hash(typical object), then this
-# routine is called recursively, adding the members to the next level of heirarchy,
-# prefixing array members with a [idx] and the hash members with the key name.
-# This continues until the entire expression is decomposed to it's atomic constituents.
-# Protection is given(with $reusedRefs) to ensure that 'circular' references within
-# arrays or hashes(i.e. where a member of a array or hash contains a reference to a
-# parent element within the hierarchy. Returns 1 if sucessfully added 0 if not
-#
+# routine is called recursively, adding the members to the next level of
+# heirarchy, prefixing array members with a [idx] and the hash members with the
+# key name.  This continues until the entire expression is decomposed to it's
+# atomic constituents.  Protection is given(with $reusedRefs) to ensure that
+# 'circular' references within arrays or hashes resolve(i.e. where a member of
+# a array or hash contains a reference to a parent element within the
+# hierarchy). Returns 1 if sucessfully added 0 if not.
 sub insertExpr {
     my ($self, $reusedRefs, $dl, $theRef, $name, $depth, $dirPath) = @_;
     my ($label, $type, $result, $selfCnt, @circRefs);
@@ -2148,9 +2176,9 @@ sub insertExpr {
     #
     # Add data new data entries to the bottom
     #
-    $dirPath = "" unless defined $dirPath;
+    $dirPath = q() unless defined $dirPath;
 
-    $label   = "";
+    $label   = q();
     $selfCnt = 0;
 
     while (ref $theRef eq 'SCALAR') {
@@ -2158,6 +2186,7 @@ sub insertExpr {
     }
     REF_CHECK: for (;;) {
         push @circRefs, $theRef;
+        ## TODO: replace ref and string comps with Ref::Util
         $type = ref $theRef;
         last unless ($type eq "REF");
         $theRef = $$theRef;    # dref again
@@ -2169,7 +2198,7 @@ sub insertExpr {
         }
     }
 
-    if (!$type || $type eq "" || $type eq "GLOB" || $type eq "CODE") {
+    if (!$type || $type eq q() || $type eq "GLOB" || $type eq "CODE") {
         eval {
             if (!defined $theRef) {
                 $dl->add($dirPath . $name, -text => "$name = $label" . "undef");
@@ -2234,11 +2263,8 @@ sub insertExpr {
         }
         return 1;
     }
-    #
-    # Anything else at this point is
-    # either a 'HASH' or an object
-    # of some kind.
-    #
+
+    # Anything else at this point is either a 'HASH' or an object of some kind.
     my (@theKeys, $idx);
     $idx     = 0;
     @theKeys = sort keys %{$theRef};
@@ -2259,9 +2285,10 @@ sub insertExpr {
         Regexp  => 1
     );
 
-    for my $r (@$theRef{@theKeys}) {    # slice out the values with the sorted list
+    for my $r (@$theRef{@theKeys}) {
         if (grep { ($builtins{ ref($_) } ? $_ : \$_) eq ($builtins{ ref($r) } ? $r : \$r) }
-            @$reusedRefs) {             # check to make sure that we're not doing a single level self reference
+            @{$reusedRefs}) {
+            # check to make sure that we're not doing a single level self reference
             eval {
                 $dl->add(
                           $dirPath
@@ -2272,12 +2299,11 @@ sub insertExpr {
                     -text => "$theKeys[$idx++] = $r REUSED ADDR"
                 );
             };
-            print "bad path $@\n" if ($@);
+            console_say("Inserting expressions, encountered bad path $@") if ($@);
             next;
         }
 
         push @$reusedRefs, $r;
-
         $result = $self->insertExpr(
             $reusedRefs,                             # recursion protection
             $dl,                                     # data list widget
@@ -2287,19 +2313,15 @@ sub insertExpr {
             $dirPath . $name . $self->{'pathSep'}    # path to add to
         ) unless $depth == 0;
 
-        pop @$reusedRefs;
-
+        pop @{$reusedRefs};
         return 0 unless $result;
         $idx += 1;
     }
-
     return 1;
 }
 
-#
 # We're setting the line where we are stopped.
 # Create a tag for this and set it as bold.
-#
 sub set_line {
     my ($self, $lineno) = @_;
     my $text = $self->{'text'};
@@ -2319,27 +2341,26 @@ sub set_line {
         "$self->{current_line}.0 linestart",
         "$self->{current_line}.0 lineend"
     );
-
     $self->{'text'}->see("$self->{current_line}.0 linestart");
 }
 
-#
 # Set the file that is in the code window.
 #
 # $fname the 'new' file to view
 # $line the line number we're at
 # $brkpts any breakpoints that may have been set in this file
-#
+
 sub set_file {
     my ($self,    $fname, $line) = @_;
     my ($lineStr, $text,  $i, @text, $noCode, $title);
     my (@breakableTagList, @nonBreakableTagList);
 
+    return unless $fname;    # We're getting an undef here on 'Restart'.
+
     my $lines = DB::get_code_lines($fname);
     return unless $lines;
 
     my $offset = DB::debugger_injected_line_offset($fname);
-
     $self->{'line_offset'} = $offset;
 
     $text = $self->{'text'};
@@ -2354,9 +2375,7 @@ sub set_file {
     $self->{main_window}->configure('-title' => $title);
 
     # Erase any existing text
-
     $text->delete('0.0', 'end');
-
     my $len = $self->{'linenumber_length'};
 
     # This is the tightest loop we have in the ptkdb code.  It is here where
@@ -2380,32 +2399,35 @@ sub set_file {
     $text->insert(
         'end',
         map {
-            #
-            # build collections of tags representing
-            # the line numbers for breakable and
-            # non-breakable lines.  We apply these
-            # tags after we've built the text
-            #
-
+            # build collections of tags representing the line numbers for
+            # breakable and non-breakable lines.  We apply these tags after
+            # we've built the text
             ($_ != 0 && push @breakableTagList, "$i.0", "$i.$len") || push @nonBreakableTagList,
                 "$i.0", "$i.$len";
 
-            $lineStr = sprintf($self->{'linenumber_format'}, $i++) . $_;    # line number + text of the line
+            # line number + text of the line
+            $lineStr = sprintf($self->{'linenumber_format'}, $i++) . $_;
 
-            substr $lineStr, -2, 1, '' if $isWin32;                         # removes the CR from win32 instances
+            # removes the CR from win32 instances
+            substr $lineStr, -2, 1, '' if $isWin32;
 
-            $lineStr .= "\n" unless /\n$/o;                                 # append a \n if there isn't one already
+            # append a \n if there isn't one already
+            $lineStr .= "\n" unless /\n$/o;
 
-            ($lineStr, 'code');                                             # return value for block, a string,tag pair for text insert
+            # return value for block, a string,tag pair for text insert
+            ($lineStr, 'code');
 
         } @{$lines}[$offset + 1 .. $#{$lines}]
     ) unless $noCode;
 
-    # Apply the tags that we've collected NOTE: it was attempted to incorporate
-    # these operations into the 'map' block above, but that actually degraded
-    # performance.
-    $text->tagAdd("breakableLine",    @breakableTagList)    if @breakableTagList;       # apply tag to line numbers where the lines are breakable
-    $text->tagAdd("nonbreakableLine", @nonBreakableTagList) if @nonBreakableTagList;    # apply tag to line numbers where the lines are not breakable.
+    # Apply the tags that we've collected. NOTE: it was attempted to
+    # incorporate these operations into the 'map' block above, but that
+    # actually degraded performance.
+
+    # apply tag to line numbers where the lines are breakable
+    $text->tagAdd("breakableLine", @breakableTagList) if @breakableTagList;
+    # apply tag to line numbers where the lines are not breakable.
+    $text->tagAdd("nonbreakableLine", @nonBreakableTagList) if @nonBreakableTagList;
 
     # Reinsert breakpoints (if info provided)
     $self->set_line($line);
@@ -2422,7 +2444,6 @@ sub get_lineno {
 
     $info = $self->{'text'}->index('insert');    # get the location for the insertion point
     $info =~ s/\..*$/\.0/;
-
     return int $info;
 }
 
@@ -2451,20 +2472,25 @@ sub DoGoto {
 
     $txt =~ s/(\d*).*/$1/;    # take the first blob of digits
 
-    unless ($self->goto_code_line($txt)) {
-        print "invalid text range\n";
-        return if $txt eq "";
+=for reworked
+
+    if ( $txt eq q() ) {
+        consoleSay('Invalid line number.');
+        return if $txt eq q(); ##>>>>> returns if value unconditionally or return unknown if cpondition true
     }
 
+=cut
+
+    unless ($self->goto_code_line($txt)) {
+        print "invalid text range\n";
+        return if $txt eq q();
+    }
     $self->{'text'}->see("$txt.0");
-
     $entry->selectionRange(0, 'end') if $entry->can('selectionRange');
-
 }
 
 sub GotoLine {
     my ($self) = @_;
-    my ($topLevel);
 
     if ($self->{goto_window}) {
         $self->{goto_window}->raise();
@@ -2476,19 +2502,14 @@ sub GotoLine {
     # Construct a dialog that has an
     # entry field, okay and cancel buttons
     #
-    my $okaySub = sub { $self->DoGoto($self->{'goto_text'}) };
-
-    $topLevel = $self->{main_window}->Toplevel(-title => "Goto Line?", -overanchor => 'cursor');
-
+    my $okaySub  = sub { $self->DoGoto($self->{'goto_text'}) };
+    my $topLevel = $self->{main_window}->Toplevel(-title => "Goto Line?", -overanchor => 'cursor');
     $self->{goto_text} = $topLevel->Entry()->pack(-side => 'top', -fill => 'both', -expand => 1);
-
     $self->{goto_text}->bind('<Return>', $okaySub);    # make a CR do the same thing as pressing an okay
-
     $self->{goto_text}->focus();
 
     # Bind a double click on the mouse button to the same action
     # as pressing the Okay button
-
     $topLevel->Button(
         -text    => "Okay",
         -command => $okaySub,
@@ -2512,7 +2533,7 @@ sub GotoLine {
     )->pack(-side => 'left', -fill => 'both', -expand => 1);
 
     $topLevel->protocol('WM_DELETE_WINDOW', sub { destroy $topLevel; });
-
+    $topLevel->geometry($self->simpleGeo());
     $self->{goto_window} = $topLevel;
 
 }
@@ -2525,7 +2546,7 @@ sub FindSearch {
     my (@switches, $result);
     my $txt = $entry->get();
 
-    return if $txt eq "";
+    return if $txt eq q();
 
     push @switches, "-forward"  if $self->{fwdOrBack} eq "forward";
     push @switches, "-backward" if $self->{fwdOrBack} eq "backward";
@@ -2533,23 +2554,22 @@ sub FindSearch {
     if ($regExp) {
         push @switches, "-regexp";
     } else {
-        push @switches, "-nocase";    # if we're not doing regex we may as well do caseless search
+        # if we're not doing regex we may as well do caseless search
+        push @switches, "-nocase";
     }
 
     $result = $self->{'text'}->search(@switches, $txt, $self->{search_start});
 
     # untag the previously found text
-
     $self->{'text'}->tagRemove('search_tag', @{ $self->{search_tag} })
         if defined $self->{search_tag};
 
-    if (!$result || $result eq "") {
-        # No Text was found
+    if (!$result || $result eq q()) {
+        # No text was found
         $btn->flash();
         $btn->bell();
-
         delete $self->{search_tag};
-        $self->{'search_start'} = "0.0";
+        $self->{'search_start'} = '0.0';
     } else {    # text found
         $self->{'text'}->see($result);
         # set the insertion of the text as well
@@ -2566,7 +2586,6 @@ sub FindSearch {
         }
 
         # tag the newly found text
-
         $self->{'text'}->tagAdd('search_tag', @{ $self->{search_tag} });
     }
 
@@ -2581,18 +2600,16 @@ sub FindText {
     my ($self) = @_;
     my ($top, $entry, $rad1, $rad2, $chk, $regExp, $frm, $okayBtn);
 
-    #
-    # if we already have the Find Text Window
-    # open don't bother openning another, bring
-    # the existing one to the front.
-    #
+    # If we already have the Find Text Window open don't bother opening
+    # another, bring the existing one to the front.
     if ($self->{find_window}) {
         $self->{find_window}->raise();
         $self->{find_text}->focus();
         return;
     }
 
-    $self->{search_start} = $self->{'text'}->index('insert') if ($self->{search_start} eq "");
+    ## WARNING: The KCG code had q( ).
+    $self->{search_start} = $self->{'text'}->index('insert') if ($self->{search_start} eq q());
 
     #
     # Subroutine called when the 'Dismiss' button
@@ -2601,24 +2618,22 @@ sub FindText {
     my $dismissSub = sub {
         $self->{'text'}->tagRemove('search_tag', @{ $self->{search_tag} })
             if defined $self->{search_tag};
-        $self->{search_start} = "";
+        $self->{search_start} = q();
         destroy { $self->{find_window} };
         delete $self->{search_tag};
         delete $self->{find_window};
     };
 
-#
-# Construct a dialog that has an entry field, forward, backward, regex option, okay and cancel buttons
-#
+    # Construct a dialog that has an entry field, forward, backward, regex
+    # option, okay and cancel buttons
     $top = $self->{main_window}->Toplevel(-title => "Find Text?");
-
     $self->{find_text} = $top->Entry()->pack(-side => 'top', -fill => 'both', -expand => 1);
-
     $frm = $top->Frame()->pack(-side => 'top', -fill => 'both', -expand => 1);
 
     $self->{fwdOrBack} = 'forward';
     $rad1 = $frm->Radiobutton(-text => "Forward", -value => 1, -variable => \$self->{fwdOrBack});
     $rad1->pack(-side => 'left', -fill => 'both', -expand => 1);
+
     $rad2 = $frm->Radiobutton(-text => "Backward", -value => 0, -variable => \$self->{fwdOrBack});
     $rad2->pack(-side => 'left', -fill => 'both', -expand => 1);
 
@@ -2630,13 +2645,11 @@ sub FindText {
 
     # Bind a double click on the mouse button to the same action
     # as pressing the Okay button
-
     $okayBtn = $top->Button(
         -text    => "Okay",
         -command => sub { $self->FindSearch($self->{find_text}, $okayBtn, $regExp); },
         %{ $self->{'button_font'} },
     )->pack(-side => 'left', -fill => 'both', -expand => 1);
-
     $self->{find_text}
         ->bind('<Return>', sub { $self->FindSearch($self->{find_text}, $okayBtn, $regExp); });
 
@@ -2647,11 +2660,9 @@ sub FindText {
     )->pack(-side => 'left', -fill => 'both', -expand => 1);
 
     $top->protocol('WM_DELETE_WINDOW', $dismissSub);
-
+    $top->geometry($self->simpleGeo());
     $self->{find_text}->focus();
-
     $self->{find_window} = $top;
-
 }
 
 sub main_loop {
@@ -2677,6 +2688,9 @@ sub main_loop {
     return $evt;
 }
 
+#
+# $subStackRef - A reference to the current subroutine stack
+#
 sub goto_sub_from_stack {
     my ($self, $f, $lineno) = @_;
     $self->set_file($f, $lineno);
@@ -2686,20 +2700,15 @@ sub refresh_stack_menu {
     my ($self) = @_;
     my ($str, $name, $i, $sub_offset, $subStack);
 
-    #
-    # CAUTION:  In the effort to 'rationalize' the code
-    # are moving some of this function down from DB::DB
-    # to here.  $sub_offset represents how far 'down'
-    # we are from DB::DB.  The $DB::subroutine_depth is
-    # tracked in such a way that while we are 'in' the debugger
-    # it will not be incremented, and thus represents the stack depth
-    # of the target program.
-    #
+    # CAUTION: In the effort to 'rationalize' the code, we are moving some of
+    # this function down over from DB::DB to here.  $sub_offset represents how
+    # far 'down' we are from DB::DB.  The $DB::subroutine_depth is tracked in
+    # such a way that while we are 'in' the debugger it will not be
+    # incremented, and thus represents the stack depth of the target program.
     $sub_offset = 1;
     $subStack   = [];
 
     # clear existing entries
-
     for ($i = 0; $i <= $DB::subroutine_depth; $i++) {
         my ($package, $filename, $line, $subName) = caller $i + $sub_offset;
         last if !$subName;
@@ -2710,10 +2719,9 @@ sub refresh_stack_menu {
     $self->{stack_menu}->menu->delete(0, 'last');    # delete existing menu items
 
     for ($i = 0; $subStack->[$i]; $i++) {
-
         $str = defined $subStack->[$i + 1] ? "$subStack->[$i+1]->{name}" : "MAIN";
-
-        my ($f, $line) = ($subStack->[$i]->{filename}, $subStack->[$i]->{line});    # make copies of the values for use in 'sub'
+        # make copies of the values for use in 'sub'
+        my ($f, $line) = ($subStack->[$i]->{filename}, $subStack->[$i]->{line});
         $self->{stack_menu}
             ->command(-label => $str, -command => sub { $self->goto_sub_from_stack($f, $line); });
     }
@@ -2741,21 +2749,13 @@ sub updateEvalWindow {
     $leng = 0;
     for (@result) {
         if ($self->{hexdump_evals}) {
-            # eventually put hex dumper code in here
-
             $self->{eval_results}->insert('end', hexDump($_));
-
-        } elsif (!$self->{'DataDumperAvailable'} || !$self->{'useDataDumperForEval'}) {
-            $str = "$_\n";
         } else {
-            $d = Data::Dumper->new([$_]);
-            $d->Indent($self->{'eval_dump_indent'});
-            $d->Terse(1);
-            if (Data::Dumper->can('Dumpxs')) {
-                $str = $d->Dumpxs($_);
-            } else {
-                $str = $d->Dump($_);
-            }
+            $str
+                = Data::Dumper->new([$_])
+                ->Indent($self->{'eval_dump_indent'})
+                ->Terse(1)
+                ->$dumpFunc();
         }
         $leng += length $str;
         $self->{eval_results}->insert('end', $str);
@@ -2766,7 +2766,7 @@ sub updateEvalWindow {
 # converts non printable chars to '.' for a string
 #
 sub printablestr {
-    return join "", map { (ord($_) >= 32 && ord($_) < 127) ? $_ : '.' } split //, $_[0];
+    return join q(), map { (ord($_) >= 32 && ord($_) < 127) ? $_ : '.' } split //, $_[0];
 }
 
 #
@@ -2783,21 +2783,16 @@ sub hexDump {
         $len = length $_;
 
         while ($len) {
-            $n = $len >= $width ? $width : $len;
-
+            $n     = $len >= $width ? $width : $len;
             $fmt   = "\n%04X  " . ("%02X " x $n) . ('   ' x ($width - $n)) . " %s";
             @elems = map ord, split //, (substr $_, $offset, $n);
             $str .= sprintf($fmt, $offset, @elems, printablestr(substr $_, $offset, $n));
             $offset += $width;
-
-            $len -= $n;
-        }    # while
-
+            $len    -= $n;
+        }
         push @retList, $str;
-    }    # for
-
-    return $retList[0] unless wantarray;
-    return @retList;
+    }
+    return wantarray ? @retList : $retList[0];
 }
 
 sub setupEvalWindow {
@@ -2831,11 +2826,10 @@ sub setupEvalWindow {
         %{ $self->{'eval_text_font'} }
     )->pack(-side => 'top', -fill => 'both', -expand => 1);
 
-    my $ptkdb_obj = Devel::ptkdb::obj();
-    my $btn       = $top->Button(
+    my $btn = $top->Button(
         -text    => 'Eval...',
         -command => sub {
-            $ptkdb_obj->{event} = 'reeval';
+            $self->{event} = 'reeval';
         }
     )->pack(-side => 'left', -fill => 'x', -expand => 1);
 
@@ -2860,7 +2854,7 @@ sub setupEvalWindow {
     $top->Button(-text => 'Dismiss', -command => $dismissSub)
         ->pack(-side => 'left', -fill => 'x', -expand => 1);
     $top->Checkbutton(-text => 'Hex', -variable => \$self->{hexdump_evals})->pack(-side => 'left');
-
+    $top->geometry($self->simpleGeo());
 }
 
 sub filterBreakPts {
@@ -2875,48 +2869,53 @@ sub filterBreakPts {
     #
     for (@$breakPtsListRef) {
         next unless defined $_;
-
         my $line = $_->{line};
         next if defined $lines->[$line] && $lines->[$line] ne '0';    # still breakable
-
         $_ = undef;
     }
 }
 
 sub DoAbout {
-    my $self = shift;
-    my $str
-        = "ptkdb $Devel::ptkdb::VERSION\nCopyright 1998,2003 by Andrew E. Page\nFeedback to aepage\@users.sourceforge.net\n\n";
-    my $threadString = "";
-
+    my $self         = shift;
+    my $threadString = q();
     $threadString = "Threads Available" if $Config::Config{usethreads};
     {
         no warnings 'once';
         $threadString = " Thread Debugging Enabled" if $DB::usethreads;
     }
-    $str .= <<"__STR__";
-  This program is free software; you can redistribute it and/or modify
-      it under the terms of either:
 
-      a) the GNU General Public License as published by the Free
-    Software Foundation; either version 1, or (at your option) any
-    later version, or
+    my $msg = <<"EOSTRING";
+ptkdb $DB::VERSION
+Copyright 1998,2013 by Andrew E. Page
+Copyright 2026 by Matthew O. Persico
 
-    b) the "Artistic License" which comes with this Kit.
+Feedback to matthew.persicom+cpan\@gmail.com
 
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See either
-    the GNU General Public License or the Artistic License for more details.
+This program is free software; you can redistribute it and/or modify
+it under the terms of either:
 
-    OS $^O
-    Tk Version $Tk::VERSION
-    Perl Version $]
-Data::Dumper Version $Data::Dumper::VERSION
-    $threadString
-__STR__
+- the GNU General Public License as published by the Free Software
+Foundation; either version 1, or (at your option) any later version,
 
-    $self->do_alert(msg => $str, title => "About ptkdb");
+or
+
+-  the "Artistic License" which comes with this Kit.
+
+This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See either the
+GNU General Public License or the Artistic License for more details.
+
+Versions
+--------
+Operating System: $^O
+Perl            : $]
+Tk              : $Tk::VERSION
+Data::Dumper    : $Data::Dumper::VERSION
+$threadString
+EOSTRING
+
+    $self->do_alert(msg => $msg, title => "About ptkdb");
 }
 
 #
@@ -2925,78 +2924,80 @@ __STR__
 #
 sub SetBreakPoint {
     my ($self, $isTemp) = @_;
-    my $ptkdb_obj = Devel::ptkdb::obj();
-    my $lineno    = $ptkdb_obj->get_lineno();
-    my $expr      = $ptkdb_obj->clear_entry_text();
+    my $lineno = $self->get_lineno();
+    my $expr   = $self->clear_entry_text();
 
-    if (!&DB::is_line_breakable($ptkdb_obj->{current_file}, $lineno + $self->{'line_offset'})) {
-        $ptkdb_obj->do_alert(msg => "line $lineno in $ptkdb_obj->{current_file} is not breakable");
+    if (!&DB::is_line_breakable($self->{current_file}, $lineno + $self->{'line_offset'})) {
+        $self->do_alert(msg => "line $lineno in $self->{current_file} is not breakable");
         return 0;
     }
-
     if (!$isTemp) {
-        $ptkdb_obj->insertBreakpoint($ptkdb_obj->{current_file}, $lineno, 1, $expr);
+        $self->insertBreakpoint($self->{current_file}, $lineno, 1, $expr);
         return 1;
     } else {
-        $ptkdb_obj->insertTempBreakpoint($ptkdb_obj->{current_file}, $lineno);
+        $self->insertTempBreakpoint($self->{current_file}, $lineno);
         return 1;
     }
-
     return 0;
 }
 
 sub UnsetBreakPoint {
     my ($self) = @_;
     my $lineno = $self->get_lineno();
-
-    my $ptkdb_obj = Devel::ptkdb::obj();
-    $self->removeBreakpoint($ptkdb_obj->{current_file}, $lineno);
+    $self->removeBreakpoint($self->{current_file}, $lineno);
 }
 
 sub balloon_post {
-    my $ptkdb_obj = Devel::ptkdb::obj();
-    my $txt       = $ptkdb_obj->{'text'};
-
-    return 0 if ($ptkdb_obj->{'expr_ballon_msg'} eq "") || ($ptkdb_obj->{'balloon_expr'} eq "");   # don't post for an empty string
-
-    return $ptkdb_obj->{'balloon_coord'};
+    my $self = shift;
+    my $txt  = $self->{'text'};
+    # don't post for an empty string
+    return 0 if ($self->{'expr_ballon_msg'} eq q()) || ($self->{'balloon_expr'} eq q());
+    return $self->{'balloon_coord'};
 }
 
 sub balloon_motion {
+    my $self = shift;
     my ($txt, $x, $y) = @_;
+
+    return 0 unless defined $txt && defined $x         && defined $y;
+    return 0 unless ref $txt     && $txt->can('rootx') && $txt->can('rooty');
+
     my ($offset_x, $offset_y) = ($x + 4, $y + 4);
-    my $ptkdb_obj = Devel::ptkdb::obj();
-    my $txt2      = $ptkdb_obj->{'text'};
+    my $txt2 = $self->{'text'};
     my $data;
 
-    $ptkdb_obj->{'balloon_coord'} = "$offset_x,$offset_y";
+    $self->{'balloon_coord'} = "$offset_x,$offset_y";
 
     $x -= $txt->rootx;
     $y -= $txt->rooty;
+
     #
     # Post an event that will cause us to put up a popup
     #
-
-    if ($txt2->tagRanges('sel')) {    # check to see if 'sel' tag exists (return undef value)
-        $data = $txt2->get("sel.first", "sel.last");    # get the text between the 'first' and 'last' point of the sel (selection) tag
+    # check to see if 'sel' tag exists (return undef value)
+    if ($txt2->tagRanges('sel')) {
+        # get the text between the 'first' and 'last' point of the sel (selection) tag
+        $data = $txt2->get("sel.first", "sel.last");
     } else {
-        $data = $ptkdb_obj->retrieve_text_expr($x, $y);
+        $data = $self->retrieve_text_expr($x, $y);
     }
 
     if (!$data) {
-        $ptkdb_obj->{'balloon_expr'} = "";
+        $self->{'balloon_expr'} = q();
         return 0;
     }
 
-    return 0 if ($data eq $ptkdb_obj->{'balloon_expr'});    # nevermind if it's the same expression
+    return 0 if ($data eq $self->{'balloon_expr'});    # nevermind if it's the same expression
 
-    $ptkdb_obj->{'event'}        = 'balloon_eval';
-    $ptkdb_obj->{'balloon_expr'} = $data;
+    $self->{'event'}        = 'balloon_eval';
+    $self->{'balloon_expr'} = $data;
 
-    return 1;                                               # ballon will be canceled and a new one put up(maybe)
+    # balloon will be canceled and a new one put up(maybe)
+    return 1;
 }
 
 sub retrieve_text_expr {
+    ## TODO - 2014-03-10 - MAKE THIS WORK WITH COMPLEX VARS
     my ($self, $x, $y) = @_;
     my $txt = $self->{'text'};
 
@@ -3013,7 +3014,6 @@ sub retrieve_text_expr {
     $col -= $offset;
 
     $data = DB::get_code_line($self->{current_file}, $idx);
-
     return if (!defined $data || $data eq '0');    # no executable text, no real variable(?)
 
     # if we're sitting over white space, leave
@@ -3023,70 +3023,52 @@ sub retrieve_text_expr {
     return if substr($data, $col, 1) =~ /\s/;
 
     # walk backwards till we find some whitespace
-
     $col = $len if $len < $col;
     while (--$col >= 0) {
         last if substr($data, $col, 1) =~ /[\s\$\@\%]/;
     }
 
     substr($data, $col) =~ /^([\$\@\%][a-zA-Z0-9_]+)/;
-
     return $1;
 }
 
 #
-# after DB::eval get's us a result
+# after DB::eval gets us a result
 #
 sub code_motion_eval {
     my ($self, @result) = @_;
     my $str;
 
     if (exists $self->{'balloon_dumper'}) {
-
-        my $d = $self->{'balloon_dumper'};
-
-        $d->Reset();
-        $d->Values([$#result == 0 ? @result : \@result]);
-
-        if ($d->can('Dumpxs')) {
-            $str = $d->Dumpxs();
-        } else {
-            $str = $d->Dump();
-        }
-
+        $str
+            = $self->{'balloon_dumper'}->Reset()
+            ->Values([$#result == 0 ? @result : \@result])
+            ->$dumpFunc();
         chomp($str);
     } else {
         $str = "@result";
     }
 
-    #
-    # Cut the string down to 1024 characters to keep from
-    # overloading the balloon window
-    #
-
+    # Cut the string down to 1024 characters to keep from overloading the
+    # balloon window.
     $self->{'expr_ballon_msg'} = "$self->{'balloon_expr'} = " . substr $str, 0, 1024;
 }
 
-#
 # Subroutine called when we enter DB::DB()
 # In other words when the target script 'stops'
 # in the Debugger
-#
 sub EnterActions {
     my ($self) = @_;
-
+    # Don't know why it's commented out.
     #  $self->{'main_window'}->Unbusy() ;
-
 }
 
-#
-# Subroutine called when we return from DB::DB()
-# When the target script resumes.
-#
+# Subroutine called when we return from DB::DB(); when the target script
+# resumes.
 sub LeaveActions {
     my ($self) = @_;
-
-    #  $self->{'main_window'}->Busy() ;
+    # Don't know why it's commented out.
+    # $self->{'main_window'}->Busy() ;
 }
 
 #
@@ -3119,7 +3101,6 @@ sub DoRestart {
 
 # Enables/Disables the feature where we stop if we've encountered a perl
 # warning such as: "Use of uninitialized value at undef_warn.pl line N"
-
 sub stop_on_warning_cb {
     my $self = shift;
     $self->{warn_sig_save}->() if $self->{warn_sig_save};    # call any previously registered warning
@@ -3196,14 +3177,10 @@ To debug a script using ptkdb invoke perl like this:
 
 =item Cursor Motion
 
-If you place the cursor over a variable (i.e. $myVar, @myVar, or
-%myVar) and pause for a second the debugger will evaluate the current
-value of the variable and pop a balloon up with the evaluated
-result. I<This feature is not available with Tk400.>
-
-If Data::Dumper(standard with perl5.00502)is available it will be used
-to format the result.  If there is an active selection, the text of
-that selection will be evaluated.
+If you place the cursor over a variable (i.e. $myVar, @myVar, or %myVar) and
+pause for a second the debugger will evaluate the current value of the variable
+and pop a balloon up with the evaluated result. If there is an active
+selection, the text of that selection will be evaluated.
 
 =back
 

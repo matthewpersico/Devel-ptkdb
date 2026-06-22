@@ -404,7 +404,7 @@ sub updateExprs {
     my (@result);
 
     for my $expr (@{ $ptkdb_obj->{'expr_list'} }) {
-        next if length $expr == 0;
+        next if length($expr) == 0;
 
         @result = &DB::dbeval($package, $expr->{'expr'});
 

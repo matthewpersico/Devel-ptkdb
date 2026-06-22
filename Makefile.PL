@@ -24,6 +24,7 @@ my %WriteMakefileArgs = (
         'Tk'                 => 0,
         'Tk::Adjuster'       => 0,
         'Tk::Balloon'        => 0,
+        'Tk::Derived'        => 0,
         'Tk::Dialog'         => 0,
         'Tk::TextUndo'       => 0,
         'Tk::ROText'         => 0,
