@@ -760,7 +760,7 @@ sub DB {
                 # next time through.
                 #
                 push @{ $ptkdb_obj->{'expr_list'} },
-                    { 'expr' => $ptkdb_obj->{'expr'}, 'depth' => $$ptkdb_obj->{'expr_depth'} }
+                    { 'expr' => $ptkdb_obj->{'expr'}, 'depth' => $ptkdb_obj->{'expr_depth'} }
                     if $r;
 
                 next;

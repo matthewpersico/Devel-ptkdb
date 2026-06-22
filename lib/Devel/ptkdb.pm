@@ -9,11 +9,13 @@ use warnings;
 # Core and CPAN modules
 use Carp qw(cluck carp confess longmess);
 use Config;
-use Cwd qw(realpath);
+use Cwd qw(realpath cwd);
 use Data::Dumper;
+use Devel::PL_origargv;
 use File::Basename qw(dirname basename);
 use FileHandle;
 use File::Spec;
+use POSIX qw(strftime);
 use Ref::Util qw(is_plain_arrayref is_ref);
 use Tk;
 use Tk::Adjuster;
@@ -206,6 +208,18 @@ sub new {
     my ($self) = {};
 
     bless $self, $type;
+    # The whole command - perl exec, perl args, program, program args
+    $self->{restart_cmd} = [Devel::PL_origargv->get()];
+
+    # ENV - We will want to restore the original environment when we
+    # restart, especially since the environment contains PATH; if
+    # perl was invoked as 'perl', we will need to have the same PATH
+    # in place to get the same perl we started with.
+    $self->{restart_ENV} = \%ENV;
+
+    # Location - we need to go back to where we started, or else you
+    # may not find $0.
+    $self->{restart_dir} = cwd();
 
     # Handles .ptkdb file saves and loads.
     $self->{state_manager} = Devel::ptkdb::State->new(ptkdb_obj => $self);
@@ -213,45 +227,28 @@ sub new {
     $self->{script_args}   = [@ARGV];                                        # copy args
     $self->{expr_depth}    = -1;
 
-    # ===================================================================
-    # Below here is code that existed in this function prior to the
-    # re-architecting of 2026/June. Any function that can be used will be
-    # hoisted up above.
-
-    $self->{DisableOnLeave} = [];    # List o' Widgets to disable when leaving the debugger
+    $self->{DisableOnLeave} = [];                                            # List o' Widgets to disable when leaving the debugger
 
     $self->{current_file}      = "";
-    $self->{current_line}      = -1;      # initial value indicating we haven't set our line/tag
-    $self->{window_pos_offset} = 10;      # when we enter how far from the top of the text are we positioned down
+    $self->{current_line}      = -1;                                         # initial value indicating we haven't set our line/tag
+    $self->{window_pos_offset} = 10;                                         # when we enter how far from the top of the text are we positioned down
     $self->{search_start}      = "0.0";
     $self->{fwdOrBack}         = 1;
     $self->{BookMarksPath}
         = $ENV{'PTKDB_BOOKMARKS_PATH'} || "$ENV{'HOME'}/.ptkdb_bookmarks" || '.ptkdb_bookmarks';
 
-    $self->{'expr_list'} = [];            # list of expressions to eval in our window fields:  {'expr'} The expr itself {'depth'} expansion depth
+    $self->{'expr_list'} = [];                                               # list of expressions to eval in our window fields:  {'expr'} The expr itself {'depth'} expansion depth
 
     $self->{'brkpt_cnt'}   = 0;
-    $self->{'brkpt_slots'} = [];          # open slots for adding breakpoints to the table
+    $self->{'brkpt_slots'} = [];                                             # open slots for adding breakpoints to the table
 
     $self->{'user_window_init_list'}     = [];
     $self->{'user_window_DB_entry_list'} = [];
 
     $self->{'subs_list_cnt'} = 0;
 
-    # The bindings and font specs for these operations have been placed here to
-    # make them accessible to people who might want to customize the
-    # operations.  REF The 'bind.html' file, included in the perlTk FAQ has a
-    # fairly good explanation of the binding syntax.
-
-    #
-    # These lists of key bindings will be applied to the "Step In", "Step Out",
-    # "Return" Commands.
-    #
     $self->{'pathSep'}            = '\x00';
     $self->{'pathSepReplacement'} = "\0x01";
-
-    # ALT-B brings up a menu
-    # $self->{'toggle_breakpt_keys = ('<Alt-b>'); # set or unset a breakpoint
 
     # Fonts used in the displays
     $self->{'button_font'}
@@ -727,7 +724,7 @@ sub setup_menu_bar_item_file {
     my $mw = $self->{main_window};
     $mw->bind('<Alt-g>'     => sub { $self->GotoLine(); });
     $mw->bind('<Control-f>' => sub { $self->FindText(); });
-    $mw->bind('<Control-r>' => \&Devel::ptkdb::DoRestart);
+    $mw->bind('<Control-r>' => sub { $self->DoRestart(); });
     $mw->bind('<Alt-q>'     => sub { $self->{'event'} = 'quit' });
     $mw->bind('<Alt-w>'     => sub { $self->close_ptkdb_window; });
 
@@ -857,7 +854,7 @@ sub setup_menu_bar_item_control {
         [   'command'    => 'Restart...',
             -accelerator => 'Ctrl-r',
             -underline   => 0,
-            -command     => \&Devel::ptkdb::DoRestart
+            -command     => sub { $self->DoRestart(); }
         ],
         '-',
         [   'checkbutton' => 'Stop On Warning',
@@ -3096,30 +3093,28 @@ sub LeaveActions {
 # Save the ptkdb state file and restart the debugger
 #
 sub DoRestart {
-    my ($fname);
+    my $self = shift;
+    my $fdir = $ENV{TMP} || $ENV{TMPDIR} || $ENV{TMP_DIR} || $ENV{TEMP} || $ENV{HOME};
+    $fdir = q(.) unless $fdir;
 
-    $fname = $ENV{'TMP'} || $ENV{'TMPDIR'} || $ENV{'TMP_DIR'} || $ENV{'TEMP'} || $ENV{'HOME'};
-    $fname .= '/' if $fname;
-    $fname = "" unless $fname;
+    my $fname = File::Spec->catfile(
+        $fdir,
+        "ptkdb_restart_state.$$." . strftime('%Y-%m-%dT%H-%M-%S', localtime)
+    );
+    $self->{state_manager}->save_state_file($fname);
 
-    $fname .= "ptkdb_restart_state$$";
+    # go back to where we were when we started
+    chdir($self->{restart_dir});
 
-    # print "saving temp state file $fname\n" ;
+    # original env. we do this assignment after the cdw in case the
+    # cwd modifies %ENV.
+    %ENV = %{ $self->{restart_ENV} };
 
-    &DB::save_state_file($fname);
+    # This setting will be seen by the new process after exec'ing.
+    $ENV{DB_RESTART_STATE_FILE} = $fname;
 
-    $ENV{'PTKDB_RESTART_STATE_FILE'} = $fname;
-
-    #
-    # build up the command to do the restart
-    #
-    my $ptkdb_obj = obj();
-    $fname = "perl -w -d:ptkdb $ptkdb_obj->{script_name} @{$ptkdb_obj->{script_args}}";
-
-    # print "$$ doing a restart with $fname\n" ;
-
-    exec $fname;
-
+    # Go..
+    exec @{ $self->{restart_cmd} };
 }
 
 # Enables/Disables the feature where we stop if we've encountered a perl
