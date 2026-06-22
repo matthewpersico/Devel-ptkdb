@@ -1,6 +1,7 @@
 package Devel::ptkdb::Playlist;
-#
-# Tk::Playlist class - provides winamp-style "playlist" editing capibilities.
+
+# This module is derived from Tk::Playlist class, which provides winamp-style
+# "playlist" editing capabilities.
 #
 # By Tyler "Crackerjack" MacDonald <crackerjack@crackerjack.net>
 # July 23rd, 2000.
@@ -8,15 +9,11 @@ package Devel::ptkdb::Playlist;
 #
 # This module is freeware; You may redistribute it under the same terms as
 # perl itself.
-#
-
-# We have copied our own version instead of using an installed copy because we
-# have made some changes specfic to the debugger.
 
 # ===========================================================================
 # Pragmas
 use strict;
-use vars qw($VERSION @ISA);
+use vars qw(@ISA);
 
 # ===========================================================================
 # Core and CPAN modules
@@ -24,8 +21,21 @@ use Tk;
 use Tk::Derived;
 use Tk::HList;
 
-$VERSION = '0.02';
-@ISA     = qw(Tk::Derived Tk::HList);
+# ===========================================================================
+# Project modules
+# None
+
+# ===========================================================================
+# Shareable package data
+
+@ISA = qw(Tk::Derived Tk::HList);
+
+# ===========================================================================
+# Package data
+# None
+
+# ===========================================================================
+# Package subs
 
 Construct Tk::Widget 'Playlist';
 
@@ -336,79 +346,3 @@ sub callback_change {
 }
 
 1;
-__END__
-
-=headl NAME
-
-Tk::Playlist - Tk::HList subclass providing playlist-like manipulation
-
-=headl SYNOPSIS
-
- use Tk::Playlist;
-
- my $playlist = $widget->Playlist(-readonly => 0);
- splaylist->add("foobar.mp3", -text => "The FooBar Song");
- splaylist->{callback_change}([ \&rewrite_m3u, "filename.m3u" ] );
-
-=headl DESCRIPTION
-
-The Tk::Playlist widget is derived from the standard Tk::HList widget.
-See its documentation for more information.
-
-In addition to the standard HList functionality, the Tk::Playlist widget
-adds the ability to modify the list directly. Users may drag entries up
-and down the list and delete items from the list using the "Delete" key.
-
-=headl WIDGET-SPECIFIC OPTIONS
-
- over
-
-=item Switch: B<-readonly>
-
-=item Method: B<readonly>
-
-Specifies that the list may not be modified.
-
-=item Switch: B<-callback_change>
-
-=item Method: B<callback_change>
-
-Specifies a Tk callback to be executed whenever the list is changed by
-the user. The callback is called once for each item that has changed,
-the first parameter is either "move" (to indicate an item has been
-moved), "done_moving" (to indicate the user has released the mouse
-button and is done dragging entries around), or "delete" (to indicate
-an item has been deleted).
-
-When the first parameter is "move" or "delete", the second parameter
-is the tag that was assigned to the item (see Tk::HList->add for more
-info).
-
-When the first parameter is "move", the third parameter is the new
-position of the item on the list, with the top of the list being "0".
-
-=back
-
-=headl BUGS
-
-When a user attempts to drag an entry beyond the top of the list, the
-position (third) parameter passed to C<callback_change> is "0". This
-could be considered a bug or a feature.
-
-=headl SEE ALSO
-
-L<Tk::HList>, L<Tk::callbacks>
-
-=headl AUTHOR
-
-Tyler MacDonald, E<lt>japh@crackerjack.netE<gt>
-
-=headl COPYRIGHT AND LICENSE
-
-Copyright (C) 2004 by Tyler MacDonald
-
-This library is free software; you can redistribute it and/or modify
-it under the same terms as Perl itself, either Perl version 5.8.4 or,
-at your option, any later version of Perl 5 you may have available.
-
-=cut

@@ -21,11 +21,12 @@ use Tk;
 use Tk::Adjuster;
 use Tk::Balloon;
 use Tk::Dialog;
-use Tk::TextUndo;
-use Tk::ROText;
-use Tk::NoteBook;
 use Tk::HList;
+use Tk::NoteBook;
+use Tk::ROText;
 use Tk::Table;
+use Tk::TextUndo;
+use Tk::Tree;
 
 # ===========================================================================
 # Project modules
@@ -707,7 +708,6 @@ sub do_tabs {
     my $self = shift;
     my ($tabs_str);
     my ($w, $result, $tabs_cfg);
-    require Tk::Dialog;
 
     $w = $self->{'main_window'}->DialogBox(-title => "Tabs", -buttons => [qw/Okay Cancel/]);
 
@@ -1371,7 +1371,6 @@ sub change_breakpoint_tag {
     #
     # Check the breakpoint tag
     #
-
     if ($txtWidget) {
         $txtWidget->tagRemove('breaksetLine',      @tagSet);
         $txtWidget->tagRemove('breakdisabledLine', @tagSet);
@@ -1389,148 +1388,75 @@ sub change_breakpoint_tag {
 
 }
 
-#
-# God Forbid anyone comment something complex and tightly optimized.
-#
-# We can get a list of the subroutines from the interpreter
-# by querrying the *DB::sub typeglob:  keys %DB::sub
-#
-# The list appears broken down by module:
-#
-#  main::BEGIN
-#  main::mySub
-#  main::otherSub
-#  Tk::Adjuster::Mapped
-#  Tk::Adjuster::Packed
-#  Tk::Button::BEGIN
-#  Tk::Button::Enter
-#
-#  We would like to break this list down into a heirarchy.
-#
-#         main                             Tk
-#  |        |       |                       |
-# BEGIN   mySub  OtherSub          |                 |
-#                               Adjuster           Button
-#                             |         |        |        |
-#                           Mapped    Packed   BEGIN    Enter
-#
-#
-#  We translate this list into a heirarchy of hashes(say three times fast).
-# We take each entry and split it into elements.  Each element is a leaf in the tree.
-# We traverse the tree with the inner for loop.
-# With each branch we check to see if it already exists or
-# we create it.  When we reach the last element, this becomes our entry.
-#
-
-#
-# An incoming list is potentially 'large' so we
-# pass in the ref to it instead.
-#
-#  New entries can be inserted by providing a $topH
-# hash ref to an existing tree.
-#
-sub tree_split {
-    my ($listRef, $separator, $topH) = @_;
-    my $list_elem;
-
-    $topH = {} unless $topH;
-
-    for my $list_elem (@$listRef) {
-        my $h = $topH;
-        for (split /$separator/o, $list_elem) {    # Tk::Adjuster::Mapped  -> ( Tk Adjuster Mapped )
-            $h->{$_} or $h->{$_} = {};             # either we have an entry for this OR we create one
-            $h = $h->{$_};
-        }
-        @$h{ 'name', 'path' } = ($_, $list_elem);    # the last leaf is our entry
-    }
-
-    return $topH;
-
+# Sort the entries case-insensitively, floating the 'main' namespace to the top.
+sub sub_list_sort {
+    my @sorted = sort { $a eq 'main' ? -1 : $b eq 'main' ? 1 : lc($a) cmp lc($b) } @_;
+    return (wantarray ? @sorted : \@sorted);
 }
 
-#
-# callback executed when someone double clicks
-# an entry in the 'Subs' Tk::Notebook page.
-#
+# Callback executed when someone double clicks an entry in the 'Subs'
+# Tk::Notebook page.
 sub sub_list_cmd {
     my ($self, $path) = @_;
-    my ($h);
-    my $sub_list = $self->{'sub_list'};
+    $path =~ s/\@/::/g;    # Put back the :: we swapped out
 
-    if ($sub_list->info('children', $path)) {
-        #
-        # Delete the children
-        #
-        $sub_list->deleteOffsprings($path);
-        return;
-    }
+    my $sub_info = $DB::sub{$path};
+    return unless defined $sub_info;
 
-    #
-    # split the path up into elements
-    # end descend through the tree.
-    #
-    $h = $self->{'subs_tree'};
-    for (split /\./o, $path) {
-        $h = $h->{$_};    # next level down
-    }
+    return unless $sub_info =~ /(.*):([0-9]+)-[0-9]+$/o;
 
-    #
-    # if we don't have a 'name' entry we
-    # still have levels to decend through.
-    #
-    if (!exists $h->{'name'}) {
-        #
-        # Add the next level paths
-        #
-        for (sort keys %$h) {
+    $self->set_file($1, $2);    # file name will be in $1, line number will be in $2 */
 
-            if (exists $h->{$_}->{'path'}) {
-                $sub_list->add($path . '.' . $_, -text => $h->{$_}->{'path'});
-            } else {
-                $sub_list->add($path . '.' . $_, -text => $_);
-            }
-        }
-        return;
-    }
-
-    $DB::sub{ $h->{'path'} } =~ /(.*):([0-9]+)-[0-9]+$/o;    # file name will be in $1, line number will be in $2 */
-
-    $self->set_file($1, $2);
-
+    return;
 }
 
 sub fill_subs_page {
     my ($self) = @_;
+    $self->{'sub_list'}->delete('all');    # clear existing entries
 
-    $self->{'sub_list'}->delete('all');                      # clear existing entries
+    my %tree;
+    for my $function (keys %DB::sub) {
 
-    my @list = keys %DB::sub;
+        # For function Foo::Bar::Bang, need to add Foo and Foo::Bar
+        # before we add Foo::Bar::Bang. We create the parent keys with
+        # the split...
+        my @leaves = split('::', $function);
 
-    $self->{'subs_tree'} = tree_split(\@list, "::");
-
-    # setup to level of list
-
-    for (sort keys %{ $self->{'subs_tree'} }) {
-        $self->{'sub_list'}->add($_, -text => $_);
+        for my $leaf (0 .. @leaves - 1) {
+            # ...and build each branch. We told the tree that the
+            # separator was '@' because trying to use a compound '::'
+            # doesn't work.
+            my $branch = join('@', @leaves[0 .. $leaf]);
+            $tree{$branch} = $leaves[$leaf];
+        }
     }
+
+    # Now that we have the branches, sort and add
+    my @entries = sub_list_sort(keys %tree);
+    for (@entries) {
+        $self->{sub_list}->add($_, -text => $tree{$_});
+        # We want all the nodes closed to start
+        $self->{sub_list}->hide(entry => $_) if (split('@', $_) > 1);
+    }
+    $self->{sub_list}->autosetmode();
 }
 
 sub setup_subs_page {
     my ($self) = @_;
 
     $self->{'subs_page_activated'} = 1;
-
-    $self->{'sub_list'}
-        = $self->{'subs_page'}->Scrolled('HList', -command => sub { $self->sub_list_cmd(@_); });
+    $self->{'sub_list'}            = $self->{'subs_page'}->Scrolled(
+        'Tree',
+        -separator => q(@),
+        -command   => sub { $self->sub_list_cmd(@_); }
+    );
 
     $self->fill_subs_page();
-
     $self->{'sub_list'}->pack(
         -side   => 'left',
         -fill   => 'both',
         -expand => 1
     );
-
     $self->{'subs_list_cnt'} = scalar keys %DB::sub;
 
 }
@@ -1580,7 +1506,6 @@ sub setup_search_panel {
 
 sub setup_breakpts_page {
     my ($self) = @_;
-    require Tk::Table;
 
     $self->{'breakpts_page'} = $self->{'notebook'}->add("brkptspage", -label => "BrkPts");
 
@@ -1643,15 +1568,11 @@ sub setup_frames {
     $frm->packAdjust(-side => $codeSide, -fill => 'both', -expand => 1);
     $txt->pack(-side => 'left', -fill => 'both', -expand => 1);
 
-    # $txt->form(-top => [ $self->{'menu_bar'} ], -left => '%0', -right => '%50') ;
-    # $frm->form(-top => [ $self->{'menu_bar'} ], -left => '%50', -right => '%100') ;
-
     $self->configure_text();
 
     #
     # Notebook
     #
-
     $self->{'notebook'} = $mw->NoteBook();
     $self->{'notebook'}->packPropagate(0);
     $self->{'notebook'}->pack(-side => $codeSide, -fill => 'both', -expand => 1);
@@ -1676,27 +1597,6 @@ sub setup_frames {
     $label           = $frame->Label(-text => "Enter Expr:")->pack(-side => 'left');
     $self->{'entry'} = $frame->Entry()->pack(-side => 'left', -fill => 'x', -expand => 1);
     $self->{'entry'}->bind('<Return>', sub { $self->enterExpr() });
-
-=for obsolete
-
-    #
-    # Hlist for data expressions
-    #
-    $self->{data_list} = $self->{'data_page'}->Scrolled(
-        'HList',
-        %{ $self->{'scrollbar_cfg'} },
-        separator => $self->{'pathSep'},
-        %{ $self->{'expression_text_font'} },
-        -command    =>  sub { $self->expr_expand() },
-        -selectmode => 'multiple'
-    );
-    $self->{data_list}->pack(
-        -side   => 'top',
-        -fill   => 'both',
-        -expand => 1
-    );
-
-=cut
 
     #
     # Playlist (HList with drag-n-drop) for data expressions
@@ -2399,20 +2299,26 @@ sub set_file {
     $text->insert(
         'end',
         map {
-            # build collections of tags representing the line numbers for
+            # Build collections of tags representing the line numbers for
             # breakable and non-breakable lines.  We apply these tags after
-            # we've built the text
-            ($_ != 0 && push @breakableTagList, "$i.0", "$i.$len") || push @nonBreakableTagList,
-                "$i.0", "$i.$len";
+            # we've built the text.
+            my $is_breakable = defined($_) && $_ != 0;
+            my $code_line    = $_ // q{};
+
+            if ($is_breakable) {
+                push @breakableTagList, "$i.0", "$i.$len";
+            } else {
+                push @nonBreakableTagList, "$i.0", "$i.$len";
+            }
 
             # line number + text of the line
-            $lineStr = sprintf($self->{'linenumber_format'}, $i++) . $_;
+            $lineStr = sprintf($self->{'linenumber_format'}, $i++) . $code_line;
 
             # removes the CR from win32 instances
             substr $lineStr, -2, 1, '' if $isWin32;
 
             # append a \n if there isn't one already
-            $lineStr .= "\n" unless /\n$/o;
+            $lineStr .= "\n" unless $code_line =~ /\n$/o;
 
             # return value for block, a string,tag pair for text insert
             ($lineStr, 'code');
