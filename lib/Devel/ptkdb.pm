@@ -613,10 +613,9 @@ sub setup_main_window {
     # Widgets
     $self->setup_menu_bar();
     $self->setup_button_bar();
-    $self->setup_command_line();    # Allows typing some debugger commands
 
     $self->focus_debugger_command_widget();
-    $self->setup_frames();          # Setup our Code, Data, and breakpoints
+    $self->setup_frames();    # Setup our Code, Data, and breakpoints
 
     $self->focus_debugger_command_widget();
 }
@@ -1113,6 +1112,8 @@ sub setup_button_bar {
     #
     $self->{button_bar} = $mw->Frame()->pack(-side => 'top');
 
+    $self->setup_command_line($self->{button_bar});
+
     $self->{stepin_button} = $self->{button_bar}->Button(
         -text, => "Step In",
         %{ $self->{'button_font'} },
@@ -1164,20 +1165,26 @@ sub setup_button_bar {
 }
 
 sub setup_command_line {
-    my ($self) = @_;
+    my ($self, $parent) = @_;
 
-    my $mw = $self->{main_window};
+    $parent //= $self->{main_window};
 
     $self->{debugger_command_obj} = Devel::ptkdb::Cmd->new(ptkdb_obj => $self);
 
-    my $frm = $mw->Frame()->pack(
-        -side => 'top',
-        -fill => 'x',
+    my $frm = $parent->Frame()->pack(
+        -side => 'left',
     );
 
     $frm->Label(
         -text => 'Command:',
     )->pack(-side => 'left');
+
+    my $ghost_widget = $frm->Label(
+        -text => q{},
+    )->pack(
+        -side => 'left',
+        -padx => 4,
+    );
 
     my $entry_widget = $frm->Entry(
         -width => 40,
@@ -1187,17 +1194,28 @@ sub setup_command_line {
         -expand => 1,
     );
 
+    $self->{debugger_command_obj}->attach_widget(
+        widget       => $entry_widget,
+        ghost_widget => $ghost_widget,
+    );
+
     my $run_command = sub {
-        my $command = $entry_widget->get();
+        my $command = $self->{debugger_command_obj}->command_text();
+
         $entry_widget->delete(0, 'end');
+
         $self->{debugger_command_obj}->execute($command);
+
         $self->focus_debugger_command_widget();
+        $self->{debugger_command_obj}->update_ghost();
+
         return;
     };
 
     $entry_widget->bind('<Return>' => $run_command);
 
     $self->{debugger_command_widget} = $entry_widget;
+    $self->{debugger_command_obj}->update_ghost();
 
     return;
 }

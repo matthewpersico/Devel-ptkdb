@@ -39,12 +39,58 @@ sub new {
     die "ptkdb_obj is required" unless $args{ptkdb_obj};
 
     return bless {
-        ptkdb_obj => $args{ptkdb_obj},
+        ptkdb_obj              => $args{ptkdb_obj},
+        widget                 => undef,
+        ghost_widget           => undef,
+        placeholder_foreground => 'gray50',
     }, $class;
 }
 
 # ===========================================================================
 # Object instance methods
+sub attach_widget {
+    my ($self, %args) = @_;
+
+    $self->{widget}       = $args{widget};
+    $self->{ghost_widget} = $args{ghost_widget};
+
+    $self->{widget}->bind(
+        '<KeyRelease>' => sub {
+            $self->update_ghost();
+        }
+    );
+
+    $self->update_ghost();
+
+    return;
+}
+
+sub command_text {
+    my ($self) = @_;
+
+    return $self->{widget}->get();
+}
+
+sub update_ghost {
+    my ($self) = @_;
+
+    my $widget = $self->{widget}       or return;
+    my $ghost  = $self->{ghost_widget} or return;
+
+    my $last = $self->{ptkdb_obj}->{command_line_last} // q{};
+
+    if (length $widget->get() || !length $last) {
+        $ghost->configure(-text => q{});
+    } else {
+        $ghost->configure(
+            -text       => $last,
+            -foreground => $self->{placeholder_foreground},
+        );
+    }
+
+    return;
+}
+
 sub execute {
     my ($self, $command) = @_;
 
