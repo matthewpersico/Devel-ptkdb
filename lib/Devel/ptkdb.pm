@@ -605,7 +605,7 @@ sub setup_main_window {
     #
     # Bind our 'quit' routine to a close command from the window manager (Alt-F4)
     #
-    $self->{main_window}->protocol('WM_DELETE_WINDOW', sub { $self->close_ptkdb_window(); });
+    $self->{main_window}->protocol('WM_DELETE_WINDOW', sub { $self->DoQuit(); });
 
     # Shared between the GUI and the command line
     $self->setup_shared_callbacks();
@@ -778,7 +778,7 @@ sub do_tabs {
     $self->{'text'}->configure(-tabs => [split /\s/, $tabs_str]);
 }
 
-sub close_ptkdb_window {
+sub close_ptkdb_window_and_run {
     my ($self) = @_;
     $self->{'event'}      = 'run';
     $self->{current_file} = q();     # force a file reset
@@ -794,7 +794,7 @@ sub setup_menu_bar_item_file {
     $mw->bind('<Control-f>' => sub { $self->FindText(); });
     $mw->bind('<Control-r>' => sub { $self->DoRestart(); });
     $mw->bind('<Alt-q>'     => sub { $self->{'event'} = 'quit' });
-    $mw->bind('<Alt-w>'     => sub { $self->close_ptkdb_window; });
+    $mw->bind('<Alt-w>'     => sub { $self->close_ptkdb_window_and_run; });
 
     my $items = [
         ['command' => 'About...',      -command => sub { $self->DoAbout(); }],
@@ -836,7 +836,7 @@ sub setup_menu_bar_item_file {
         [   'command'    => 'Close Window and Run',
             -accelerator => 'Alt+W',
             -underline   => 6,
-            -command     => sub { $self->close_ptkdb_window(); }
+            -command     => sub { $self->close_ptkdb_window_and_run(); }
         ],
 
         [   'command'    => 'Quit...',
