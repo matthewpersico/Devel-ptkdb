@@ -27,6 +27,7 @@ my @execute_msg = (
     "r   - return",
     "c   - continue",
     "l # - goto line # in current code",
+    "l   - page down in current code",
     "q   - quit"
 );
 
@@ -88,6 +89,8 @@ sub execute {
         return;
     } elsif ($command =~ /^l\s+(\d+)$/) {
         $retval = $ptkdb_obj->goto_code_line($1);
+    } elsif ($command eq 'l') {
+        $retval = $ptkdb_obj->page_code_window();
     }
 
     if ($retval && $retval eq '<no command>') {

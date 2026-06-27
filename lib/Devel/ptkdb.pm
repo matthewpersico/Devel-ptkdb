@@ -2405,9 +2405,29 @@ sub get_lineno {
     return int $info;
 }
 
+sub page_code_window {
+    my ($self) = @_;
+
+    my $text = $self->{text};
+
+    my $current_line = $self->get_lineno();
+
+    my ($top_line)    = split /\./, $text->index('@0,0');
+    my ($bottom_line) = split /\./, $text->index('@0,' . ($text->height - 1));
+
+    my $visible_lines = $bottom_line - $top_line + 1;
+    my $delta         = int($visible_lines / 3) || 1;
+
+    my $target_line = $current_line + $delta;
+
+    $text->see("$target_line.0");
+    $text->markSet('insert', "$target_line.0");
+
+    return 1;
+}
+
 sub goto_code_line {
     my ($self, $line) = @_;
-
     return unless defined $line;
 
     $line =~ s/^\s+|\s+$//g;
