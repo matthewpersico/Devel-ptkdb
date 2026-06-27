@@ -2,12 +2,29 @@ use strict;
 use warnings;
 use ExtUtils::MakeMaker;
 
+my %PM_FILES = (
+    'lib/Devel/ptkdb.pm' => '$(INST_LIB)/Devel/ptkdb.pm',
+);
+
+for my $file (
+    glob('lib/Devel/ptkdb/*.pm'),
+    glob('lib/Devel/ptkdb/icons/*.png'),
+    glob('lib/Devel/ptkdb/icons/*.ico'),
+    glob('lib/Devel/ptkdb/icons/*.xpm'),
+) {
+    next if -d $file;
+
+    (my $relative_path = $file) =~ s{\Alib/}{};
+    $PM_FILES{$file} = '$(INST_LIB)/' . $relative_path;
+}
+
 my %WriteMakefileArgs = (
     NAME               => 'Devel::ptkdb',
     AUTHOR             => ['Matthew O. Persico <persicom.cpan@gmail.com>'],
     VERSION_FROM       => 'lib/Devel/ptkdb.pm',
     ABSTRACT_FROM      => 'lib/Devel/ptkdb.pm',
     LICENSE            => 'perl',
+    PM                 => \%PM_FILES,
     CONFIGURE_REQUIRES => {
         'CPAN::Meta'          => '2.150013',
         'ExtUtils::MakeMaker' => '0',

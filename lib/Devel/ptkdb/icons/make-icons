@@ -1,0 +1,28 @@
+# -*- sh -*-
+# shellcheck shell=bash
+
+for ext in png gif xpm; do
+    if [[ $ext != 'png' ]]; then
+        tgt=ptkdb.${ext}
+        convert ptkdb.png ${tgt}
+        file "${tgt}"
+    fi
+    for size in 16 32 48 64 128 256; do
+        tgt=ptkdb-${size}.${ext}
+        convert ptkdb.png -resize ${size}x${size} "${tgt}"
+        file "${tgt}"
+    done
+done
+
+convert ptkdb.png \
+    \( +clone -resize 256x256 \) \
+    \( +clone -resize 128x128 \) \
+    \( +clone -resize 64x64  \) \
+    \( +clone -resize 48x48  \) \
+    \( +clone -resize 40x40  \) \
+    \( +clone -resize 32x32  \) \
+    \( +clone -resize 24x24  \) \
+    \( +clone -resize 20x20  \) \
+    \( +clone -resize 16x16  \) \
+    -delete 0 \
+    ptkdb.ico

@@ -445,6 +445,57 @@ sub save_state_file {
     return $self->{state_manager}->save_state_file(@args);
 }
 
+sub icon_file {
+    my ($self, @path) = @_;
+
+    my $base = __FILE__;
+    $base =~ s/\.pm\z//;
+
+    return File::Spec->catfile($base, qw(icons), @path);
+}
+
+sub set_window_icon {
+    my ($self) = @_;
+
+    my $mw = $self->{main_window};
+
+    my @candidates;
+    push @candidates, qw(ptkdb.ico)
+        if $^O eq 'MSWin32';
+
+    for my $ext (qw (png gif xpm)) {
+        push @candidates, 'ptkdb.' . $ext;
+        # This is the preferred order for window managers, according to
+        # research.
+        for my $size (qw( 32 48 64 24 20 16 128 256)) {
+            push @candidates, join(
+                '',
+                'ptkdb-',
+                $size,
+                q(.),
+                $ext
+            );
+        }
+    }
+
+    for my $icon (@candidates) {
+        my $file = $self->icon_file($icon);
+        next unless -r $file;
+
+        my $img = eval { $mw->Photo(-file => $file); };
+        next unless $img;
+
+        $mw->iconimage($img);
+        $mw->Icon(-image => $img) if $mw->can('Icon');
+
+        $self->{window_icon_image} = $img;    # keep alive
+
+        return 1;
+    }
+
+    return;
+}
+
 # =========================================================================
 # Below here is code that existed prior to the re-architecting of
 # 2026/June. Any function that can be used will be hoisted up above.
@@ -545,6 +596,7 @@ sub setup_main_window {
 
     $self->{main_window} = MainWindow->new();
     $self->{main_window}->geometry($ENV{'PTKDB_GEOMETRY'} || "800x600");
+    $self->set_window_icon();
 
     $self->setup_options();    # must be done after MainWindow and before other frames are setup
 
