@@ -1110,30 +1110,25 @@ sub setup_button_bar {
     #
     # Bar for some popular controls
     #
-    $self->{button_bar} = $mw->Frame()->pack(-side => 'top');
-
-    $self->setup_command_line($self->{button_bar});
+    $self->{button_bar} = $mw->Frame()->pack(-side => 'top', -fill => 'x');
 
     $self->{stepin_button} = $self->{button_bar}->Button(
         -text, => "Step In",
         %{ $self->{'button_font'} },
         -command => $self->{shared_callbacks}->{stepInSub}
     );
-    $self->{stepin_button}->pack(-side => 'left');
 
     $self->{stepover_button} = $self->{button_bar}->Button(
         -text, => "Step Over",
         %{ $self->{'button_font'} },
         -command => $self->{shared_callbacks}->{stepOverSub}
     );
-    $self->{stepover_button}->pack(-side => 'left');
 
     $self->{return_button} = $self->{button_bar}->Button(
         -text, => "Return",
         %{ $self->{'button_font'} },
         -command => $self->{shared_callbacks}->{returnSub}
     );
-    $self->{return_button}->pack(-side => 'left');
 
     $self->{run_button} = $self->{button_bar}->Button(
         -background => 'green',
@@ -1141,21 +1136,26 @@ sub setup_button_bar {
         %{ $self->{'button_font'} },
         -command => $self->{shared_callbacks}->{runSub}
     );
-    $self->{run_button}->pack(-side => 'left');
 
     $self->{run_to_button} = $self->{button_bar}->Button(
         -text, => "Run To",
         %{ $self->{'button_font'} },
         -command => $self->{shared_callbacks}->{runToSub}
     );
-    $self->{run_to_button}->pack(-side => 'left');
 
     $self->{breakpt_button} = $self->{button_bar}->Button(
         -text, => "Break",
         %{ $self->{'button_font'} },
         -command => sub { $self->SetBreakPoint; }
     );
-    $self->{breakpt_button}->pack(-side => 'left');
+    $self->{breakpt_button}->pack(-side => 'right');
+    $self->{run_to_button}->pack(-side => 'right');
+    $self->{run_button}->pack(-side => 'right');
+    $self->{return_button}->pack(-side => 'right');
+    $self->{stepover_button}->pack(-side => 'right');
+    $self->{stepin_button}->pack(-side => 'right');
+
+    $self->setup_command_line($self->{button_bar});
 
     push @{ $self->{DisableOnLeave} },
         @$self{
@@ -1172,7 +1172,9 @@ sub setup_command_line {
     $self->{debugger_command_obj} = Devel::ptkdb::Cmd->new(ptkdb_obj => $self);
 
     my $frm = $parent->Frame()->pack(
-        -side => 'left',
+        -side   => 'left',
+        -fill   => 'x',
+        -expand => 1,
     );
 
     $frm->Label(
@@ -1187,7 +1189,7 @@ sub setup_command_line {
     );
 
     my $entry_widget = $frm->Entry(
-        -width => 40,
+        -width => 1,
     )->pack(
         -side   => 'left',
         -fill   => 'x',
@@ -1599,8 +1601,12 @@ sub setup_frames {
 
     my ($codeSide) = $ENV{'PTKDB_CODE_SIDE'} || $mw->optionGet("codeside", q()) || 'left';
 
-    $mw->update;                                     # force geometry manager to map main_window
-    $frm = $mw->Frame(-width => $mw->reqwidth());    # frame for our code pane and search controls
+    $mw->update;    # force geometry manager to map main_window
+    my $half_width = int(($mw->width || $mw->reqwidth) / 2);
+    $frm = $mw->Frame(
+        -width => $half_width,
+    );              # frame for our code pane and search controls
+
     $self->setup_search_panel($frm, -side => 'top', -fill => 'x');
 
     #
@@ -1644,6 +1650,9 @@ sub setup_frames {
     # Notebook
     #
     $self->{'notebook'} = $mw->NoteBook();
+    $self->{'notebook'}->configure(
+        -width => $half_width,
+    );
     $self->{'notebook'}->packPropagate(0);
     $self->{'notebook'}->pack(-side => $codeSide, -fill => 'both', -expand => 1);
 
