@@ -1,1 +1,2 @@
-brkpt('regression/issue-3/test.pl', 10);
+brkpt('blib/lib/Devel/ptkdb.pm', 126);
+brkpt('blib/lib/Devel/ptkdb.pm', 1494);
