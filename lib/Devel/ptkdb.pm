@@ -245,6 +245,66 @@ sub bind_key {
     return;
 }
 
+sub font_settings {
+    my ($self, $type) = @_;
+
+    my %font_env = (
+        code => 'PTKDB_CODE_FONT',
+        gui  => 'PTKDB_GUI_FONT',
+    );
+    my %default_font = (
+        code => 'Courier 10',
+        gui  => undef,
+    );
+
+    confess "Unknown font type '$type'" unless exists $font_env{$type};
+
+    my $font = $ENV{ $font_env{$type} } || $default_font{$type};
+    return $font ? { -font => $font } : {};
+}
+
+sub apply_font_settings {
+    my ($self, $widget, $type) = @_;
+
+    my $settings = $self->font_settings($type);
+    return unless $widget && %{$settings};
+
+    eval { $widget->configure(%{$settings}); };
+    if ($widget->can('children')) {
+        for my $child ($widget->children) {
+            $self->apply_font_settings($child, $type);
+        }
+    }
+
+    return;
+}
+
+sub code_item_style_args {
+    my ($self, $widget, $item_type) = @_;
+    $item_type ||= 'text';
+
+    my $settings = $self->font_settings('code');
+    return unless $widget && %{$settings};
+
+    my $key = "$widget:$item_type";
+    if (!exists $self->{code_item_styles}->{$key}) {
+        $self->{code_item_styles}->{$key} = eval { $widget->ItemStyle($item_type, %{$settings}) };
+        if (!$self->{code_item_styles}->{$key} && $widget->can('children')) {
+            CHILD:
+            for my $child ($widget->children) {
+                my @child_style = $self->code_item_style_args($child, $item_type);
+                if (@child_style) {
+                    $self->{code_item_styles}->{$key} = $child_style[1];
+                    last CHILD;
+                }
+            }
+        }
+    }
+
+    my $style = $self->{code_item_styles}->{$key};
+    return $style ? (-style => $style) : ();
+}
+
 # ===========================================================================
 # Object instance methods
 
@@ -310,17 +370,6 @@ sub new {
     $self->{'step_over_mouse'}     = ['<Shift-Button-3>'];                       # step over a subroutine
     $self->{'return_mouse'}        = ['<Control-Button-3>'];                     # return from a subroutine
     $self->{'toggle_breakpt_keys'} = [$self->key_event('toggle_breakpoint')];    # set or unset a breakpoint
-
-    # Fonts used in the displays
-    $self->{'button_font'}
-        = $ENV{'PTKDB_BUTTON_FONT'} ? { "-font" => $ENV{'PTKDB_CODE_FONT'} } : {};
-    $self->{'code_text_font'}
-        = $ENV{'PTKDB_CODE_FONT'} ? { "-font" => $ENV{'PTKDB_CODE_FONT'} } : {};
-
-    $self->{'expression_text_font'}
-        = $ENV{'PTKDB_EXPRESSION_FONT'} ? { "-font" => $ENV{'PTKDB_EXPRESSION_FONT'} } : {};
-    $self->{'eval_text_font'}
-        = $ENV{'PTKDB_EVAL_FONT'} ? { -font => $ENV{'PTKDB_EVAL_FONT'} } : {};
 
     $self->{'eval_dump_indent'} = $ENV{'PTKDB_EVAL_DUMP_INDENT'} || 1;
 
@@ -388,6 +437,7 @@ sub do_alert {
         -text       => $message,
         -justify    => 'left',
         -wraplength => 600,
+        %{ $self->font_settings('gui') },
     )->pack(
         -side   => 'top',
         -fill   => 'both',
@@ -399,6 +449,7 @@ sub do_alert {
     $top->Button(
         -text    => 'OK',
         -command => sub { $top->destroy(); },
+        %{ $self->font_settings('gui') },
     )->pack(
         -side => 'bottom',
         -pady => 10,
@@ -769,9 +820,10 @@ sub DoOpen {
 
     $listBox = $topLevel->Scrolled(
         'Listbox', %{ $self->{'scrollbar_cfg'} },
-        %{ $self->{'expression_text_font'} },
+        %{ $self->font_settings('code') },
         -width => 30
     )->pack(-side => 'top', -fill => 'both', -expand => 1);
+    $self->apply_font_settings($listBox, 'code');
 
     # Bind a double click on the mouse button to the same action
     # as pressing the Okay button
@@ -783,12 +835,12 @@ sub DoOpen {
     $topLevel->Button(
         -text    => "Okay",
         -command => $chooseSub,
-        %{ $self->{'button_font'} },
+        %{ $self->font_settings('gui') },
     )->pack(-side => 'left', -fill => 'both', -expand => 1);
 
     $topLevel->Button(
         -text => "Cancel",
-        %{ $self->{'button_font'} },
+        %{ $self->font_settings('gui') },
         -command => sub { destroy $topLevel; }
     )->pack(-side => 'left', -fill => 'both', -expand => 1);
 }
@@ -804,9 +856,11 @@ sub do_tabs {
 
     $tabs_str = join " ", @$tabs_cfg if $tabs_cfg;
 
-    $w->add('Label', -text => 'Tabs:')->pack(-side => 'left');
+    $w->add('Label', -text => 'Tabs:', %{ $self->font_settings('gui') })->pack(-side => 'left');
 
-    $w->add('Entry', -textvariable => \$tabs_str)->pack(-side => 'left')->selectionRange(0, 'end');
+    $w->add('Entry', -textvariable => \$tabs_str, %{ $self->font_settings('code') })
+        ->pack(-side => 'left')
+        ->selectionRange(0, 'end');
 
     $result = $w->Show();
 
@@ -1069,7 +1123,8 @@ sub setup_menu_bar {
     $self->{file_menu_button} = $mb->Menubutton(
         -text      => 'File',
         -underline => 0,
-        -menuitems => $self->setup_menu_bar_item_file()
+        -menuitems => $self->setup_menu_bar_item_file(),
+        %{ $self->font_settings('gui') },
     )->pack(
         -side =>,
         'left',
@@ -1081,7 +1136,8 @@ sub setup_menu_bar {
     $self->{control_menu_button} = $mb->Menubutton(
         -text      => 'Control',
         -underline => 0,
-        -menuitems => $self->setup_menu_bar_item_control()
+        -menuitems => $self->setup_menu_bar_item_control(),
+        %{ $self->font_settings('gui') },
     )->pack(
         -side =>,
         'left',
@@ -1093,6 +1149,7 @@ sub setup_menu_bar {
         -text      => 'Data',
         -menuitems => $self->setup_menu_bar_item_data(),
         -underline => 0,
+        %{ $self->font_settings('gui') },
     )->pack(
         -side => 'left',
         -padx => 2
@@ -1102,6 +1159,7 @@ sub setup_menu_bar {
     $self->{stack_menu} = $mb->Menubutton(
         -text      => 'Stack',
         -underline => 2,
+        %{ $self->font_settings('gui') },
     )->pack(
         -side => 'left',
         -padx => 2
@@ -1111,6 +1169,7 @@ sub setup_menu_bar {
     $self->{bookmarks_menu} = $mb->Menubutton(
         -text      => 'Bookmarks',
         -underline => 0,
+        %{ $self->font_settings('gui') },
     )->pack(
         -side => 'left',
         -padx => 2
@@ -1120,7 +1179,8 @@ sub setup_menu_bar {
     # Windows Menu
     $mb->Menubutton(
         -text      => 'Windows',
-        -menuitems => $self->setup_menu_bar_item_windows
+        -menuitems => $self->setup_menu_bar_item_windows,
+        %{ $self->font_settings('gui') },
     )->pack(
         -side => 'left',
         -padx => 2
@@ -1138,38 +1198,38 @@ sub setup_button_bar {
 
     $self->{stepin_button} = $self->{button_bar}->Button(
         -text, => "Step In",
-        %{ $self->{'button_font'} },
+        %{ $self->font_settings('gui') },
         -command => $self->{shared_callbacks}->{stepInSub}
     );
 
     $self->{stepover_button} = $self->{button_bar}->Button(
         -text, => "Step Over",
-        %{ $self->{'button_font'} },
+        %{ $self->font_settings('gui') },
         -command => $self->{shared_callbacks}->{stepOverSub}
     );
 
     $self->{return_button} = $self->{button_bar}->Button(
         -text, => "Return",
-        %{ $self->{'button_font'} },
+        %{ $self->font_settings('gui') },
         -command => $self->{shared_callbacks}->{returnSub}
     );
 
     $self->{run_button} = $self->{button_bar}->Button(
         -background => 'green',
         -text,      => "Run",
-        %{ $self->{'button_font'} },
+        %{ $self->font_settings('gui') },
         -command => $self->{shared_callbacks}->{runSub}
     );
 
     $self->{run_to_button} = $self->{button_bar}->Button(
         -text, => "Run To",
-        %{ $self->{'button_font'} },
+        %{ $self->font_settings('gui') },
         -command => $self->{shared_callbacks}->{runToSub}
     );
 
     $self->{breakpt_button} = $self->{button_bar}->Button(
         -text, => "Break",
-        %{ $self->{'button_font'} },
+        %{ $self->font_settings('gui') },
         -command => sub { $self->SetBreakPoint; }
     );
     $self->{breakpt_button}->pack(-side => 'right');
@@ -1203,10 +1263,12 @@ sub setup_command_line {
 
     $frm->Label(
         -text => 'Command:',
+        %{ $self->font_settings('gui') },
     )->pack(-side => 'left');
 
     my $ghost_widget = $frm->Label(
         -text => q{},
+        %{ $self->font_settings('gui') },
     )->pack(
         -side => 'left',
         -padx => 4,
@@ -1214,6 +1276,7 @@ sub setup_command_line {
 
     my $entry_widget = $frm->Entry(
         -width => 1,
+        %{ $self->font_settings('gui') },
     )->pack(
         -side   => 'left',
         -fill   => 'x',
@@ -1251,8 +1314,10 @@ sub edit_bookmarks {
 
     my ($top) = $self->{main_window}->Toplevel(-title => "Edit Bookmarks");
 
-    my $list = $top->Scrolled('Listbox', -selectmode => 'multiple')
+    my $list
+        = $top->Scrolled('Listbox', -selectmode => 'multiple', %{ $self->font_settings('code') })
         ->pack(-side => 'top', -fill => 'both', -expand => 1);
+    $self->apply_font_settings($list, 'code');
 
     my $deleteSub = sub {
         my $cnt = 0;
@@ -1267,11 +1332,15 @@ sub edit_bookmarks {
 
     my $frm = $top->Frame()->pack(-side => 'top', -fill => 'x', -expand => 1);
 
-    my $deleteBtn = $frm->Button(-text => 'Delete', -command => $deleteSub)
+    my $deleteBtn
+        = $frm->Button(-text => 'Delete', -command => $deleteSub, %{ $self->font_settings('gui') })
         ->pack(-side => 'left', -fill => 'x', -expand => 1);
-    my $cancelBtn = $frm->Button(-text => 'Cancel', -command => sub { destroy $top; })
-        ->pack(-side => 'left', -fill => 'x', -expand => 1);
-    my $dismissBtn = $frm->Button(-text => 'Okay', -command => $okaySub)
+    my $cancelBtn = $frm->Button(
+        -text => 'Cancel', -command => sub { destroy $top; },
+        %{ $self->font_settings('gui') }
+    )->pack(-side => 'left', -fill => 'x', -expand => 1);
+    my $dismissBtn
+        = $frm->Button(-text => 'Okay', -command => $okaySub, %{ $self->font_settings('gui') })
         ->pack(-side => 'left', -fill => 'x', -expand => 1);
 
     $list->insert('end', @{ $self->{'bookmarks'} });
@@ -1382,8 +1451,9 @@ sub expr_expand {
         $self->{'expr_list'}->[$index]->{'depth'} = $depth - 1;    # adjust our depth
     } else {
         # Delete the existing tree and insert a new one
+        my @code_item_style = $self->code_item_style_args($l);
         $l->deleteEntry($root);
-        $l->add($root, -at => $index);
+        $l->add($root, -at => $index, @code_item_style);
         $self->{'expr_list'}->[$index]->{'depth'} += $self->{'add_expr_depth'};
 
         # Force an update on our expressions
@@ -1562,9 +1632,10 @@ sub fill_subs_page {
     }
 
     # Now that we have the branches, sort and add
-    my @entries = sub_list_sort(keys %tree);
+    my @entries         = sub_list_sort(keys %tree);
+    my @code_item_style = $self->code_item_style_args($self->{sub_list}, 'imagetext');
     for (@entries) {
-        $self->{sub_list}->add($_, -text => $tree{$_});
+        $self->{sub_list}->add($_, -text => $tree{$_}, @code_item_style);
         # We want all the nodes closed to start
         $self->{sub_list}->hide(entry => $_) if (split('@', $_) > 1);
     }
@@ -1578,8 +1649,10 @@ sub setup_subs_page {
     $self->{'sub_list'}            = $self->{'subs_page'}->Scrolled(
         'Tree',
         -separator => q(@),
-        -command   => sub { $self->sub_list_cmd(@_); }
+        -command   => sub { $self->sub_list_cmd(@_); },
+        %{ $self->font_settings('code') },
     );
+    $self->apply_font_settings($self->{'sub_list'}, 'code');
 
     $self->fill_subs_page();
     $self->{'sub_list'}->pack(
@@ -1615,18 +1688,25 @@ sub setup_search_panel {
 
     $frm = $parent->Frame();
 
-    $frm->Button(-text => 'Goto', -command => sub { $self->DoGoto($entry) })->pack(-side => 'left');
+    $frm->Button(
+        -text    => 'Goto',
+        -command => sub { $self->DoGoto($entry) },
+        %{ $self->font_settings('gui') },
+    )->pack(-side => 'left');
     $srchBtn = $frm->Button(
         -text    => 'Search',
-        -command => sub { $self->FindSearch($entry, $srchBtn, 0); }
+        -command => sub { $self->FindSearch($entry, $srchBtn, 0); },
+        %{ $self->font_settings('gui') },
     )->pack(-side => 'left');
 
     $regexBtn = $frm->Button(
         -text    => 'Regex',
-        -command => sub { $self->FindSearch($entry, $regexBtn, 1); }
+        -command => sub { $self->FindSearch($entry, $regexBtn, 1); },
+        %{ $self->font_settings('gui') },
     )->pack(-side => 'left',);
 
-    $entry = $frm->Entry(-width => 50)->pack(-side => 'left', -fill => 'both', -expand => 1);
+    $entry = $frm->Entry(-width => 50, %{ $self->font_settings('code') })
+        ->pack(-side => 'left', -fill => 'both', -expand => 1);
 
     $entry->bind('<Return>', sub { check_search_request($entry, $self, $srchBtn, $regexBtn); });
 
@@ -1653,7 +1733,7 @@ sub setup_breakpts_page {
 sub setup_frames {
     my ($self) = @_;
     my $mw = $self->{'main_window'};
-    my ($txt, $place_holder, $frm);
+    my ($txt, $code_scroller, $place_holder, $frm);
 
     # get the side that we want to put the code pane on
 
@@ -1670,19 +1750,23 @@ sub setup_frames {
     #
     # Text window for the code of our currently viewed file
     #
-    $self->{'text'} = $frm->Scrolled(
+    $code_scroller = $frm->Scrolled(
         'ROText',
         -wrap => "none",
         %{ $self->{'scrollbar_cfg'} },
-        %{ $self->{'code_text_font'} }
+        %{ $self->font_settings('code') }
     );
 
-    $txt = $self->{'text'};
-    for ($txt->children) {
+    $self->apply_font_settings($code_scroller, 'code');
+    $self->{'text'} = $code_scroller;
+
+    for ($code_scroller->children) {
         next unless (ref $_) =~ /ROText$/;
         $self->{'text'} = $_;
         last;
     }
+    $txt = $self->{'text'};
+    $self->apply_font_settings($txt, 'code');
 
     for ($self->{'step_over_mouse'}) {
         $txt->bind($_ => sub { $self->{'shared_callbacks'}->{'stepOverSub'}; });
@@ -1697,10 +1781,10 @@ sub setup_frames {
     }
 
     $frm->packPropagate(0);
-    $txt->packPropagate(0);
+    $code_scroller->packPropagate(0);
 
     $frm->packAdjust(-side => $codeSide, -fill => 'both', -expand => 1);
-    $txt->pack(-side => 'left', -fill => 'both', -expand => 1);
+    $code_scroller->pack(-side => 'left', -fill => 'both', -expand => 1);
 
     $self->configure_text();
 
@@ -1723,16 +1807,20 @@ sub setup_frames {
     # frame, entry and label for quick expressions
     #
     my $frame = $self->{'data_page'}->Frame()->pack(-side => 'top', -fill => 'x');
-    my $label = $frame->Label(-text => "Quick Expr:")->pack(-side => 'left');
-    $self->{'quick_entry'} = $frame->Entry()->pack(-side => 'left', -fill => 'x', -expand => 1);
+    my $label = $frame->Label(-text => "Quick Expr:", %{ $self->font_settings('gui') })
+        ->pack(-side => 'left');
+    $self->{'quick_entry'} = $frame->Entry(%{ $self->font_settings('code') })
+        ->pack(-side => 'left', -fill => 'x', -expand => 1);
     $self->{'quick_entry'}->bind('<Return>', sub { $self->quickExpr(); });
 
     #
     # Entry widget for expressions and breakpoints
     #
-    $frame           = $self->{'data_page'}->Frame()->pack(-side => 'top', -fill => 'x');
-    $label           = $frame->Label(-text => "Enter Expr:")->pack(-side => 'left');
-    $self->{'entry'} = $frame->Entry()->pack(-side => 'left', -fill => 'x', -expand => 1);
+    $frame = $self->{'data_page'}->Frame()->pack(-side => 'top', -fill => 'x');
+    $label = $frame->Label(-text => "Enter Expr:", %{ $self->font_settings('gui') })
+        ->pack(-side => 'left');
+    $self->{'entry'} = $frame->Entry(%{ $self->font_settings('code') })
+        ->pack(-side => 'left', -fill => 'x', -expand => 1);
     $self->{'entry'}->bind('<Return>', sub { $self->enterExpr() });
 
     #
@@ -1742,10 +1830,11 @@ sub setup_frames {
         'Playlist',
         %{ $self->{'scrollbar_cfg'} },
         -separator => $self->{'pathSep'},
-        %{ $self->{'expression_text_font'} },
+        %{ $self->font_settings('code') },
         -command         => sub { $self->expr_expand(@_) },
         -callback_change => sub { $self->expr_move(@_); }
     );
+    $self->apply_font_settings($self->{data_list}, 'code');
     $self->{data_list}->pack(-side => 'top', -fill => 'both', -expand => 1);    #
 
     # tab for code call hierarchy. All modules are presented, including the
@@ -1801,8 +1890,7 @@ sub configure_text {
             || 'blue'
     );
 
-    my $stopFnt = $mw->optionGet("stopfont", "background") || $ENV{'PTKDB_STOP_TAG_FONT'};
-    push @stopTagConfig, (-font => $stopFnt) if $stopFnt;    # user may not have specified a font, if not, stay with the default
+    push @stopTagConfig, %{ $self->font_settings('code') };
 
     $txt->tagConfigure('stoppt', @stopTagConfig);
     $txt->tagConfigure(
@@ -1861,9 +1949,8 @@ sub setup_options {
     return unless $mw->can('appname');
 
     $mw->appname("ptkdb");
-    $mw->optionAdd("stopcolor"      => 'cyan',  60);
-    $mw->optionAdd("stopfont"       => 'fixed', 60);
-    $mw->optionAdd("breaktag"       => 'red',   60);
+    $mw->optionAdd("stopcolor"      => 'cyan', 60);
+    $mw->optionAdd("breaktag"       => 'red',  60);
     $mw->optionAdd("searchtagcolor" => 'green');
 
     $mw->optionClear;    #  necessary to reload xresources
@@ -1987,26 +2074,30 @@ sub add_brkpt_to_brkpt_page {
         -text => "$btnName:$index",
         # CAUTION value tracking
         -variable => \$brkpt->{'value'},
-        -command  => sub { $self->brkpt_checkbutton($fname, $index, $brkpt) }
+        -command  => sub { $self->brkpt_checkbutton($fname, $index, $brkpt) },
+        %{ $self->font_settings('code') },
     );
     $btn->pack(-side => 'left');
 
     $btn = $upperFrame->Button(
         -text    => "Delete",
-        -command => sub { $self->removeBreakpoint($fname, $index); }
+        -command => sub { $self->removeBreakpoint($fname, $index); },
+        %{ $self->font_settings('gui') },
     );
     $btn->pack(-side => 'left', -fill => 'x', -expand => 1);
 
     $btn = $upperFrame->Button(
         -text    => "Goto",
-        -command => sub { $self->set_file($fname, $index); }
+        -command => sub { $self->set_file($fname, $index); },
+        %{ $self->font_settings('gui') },
     );
     $btn->pack(-side => 'left', -fill => 'x', -expand => 1);
 
     $lowerFrame = $frm->Frame()->pack(-side => 'top', '-fill' => 'x', -expand => 1);
-    $lowerFrame->Label(-text => "Cond:")->pack(-side => 'left');
+    $lowerFrame->Label(-text => "Cond:", %{ $self->font_settings('gui') })->pack(-side => 'left');
 
-    $btn = $lowerFrame->Entry(-textvariable => \$brkpt->{'expr'});
+    $btn
+        = $lowerFrame->Entry(-textvariable => \$brkpt->{'expr'}, %{ $self->font_settings('code') });
     $btn->pack(-side => 'left', -fill => 'x', -expand => 1);
 
     $frm->pack(-side => 'top', -fill => 'x', -expand => 1);
@@ -2209,6 +2300,7 @@ sub fixExprPath {
 sub insertExpr {
     my ($self, $reusedRefs, $dl, $theRef, $name, $depth, $dirPath) = @_;
     my ($label, $type, $result, $selfCnt, @circRefs);
+    my @code_item_style = $self->code_item_style_args($dl);
 
     #
     # Add data new data entries to the bottom
@@ -2238,9 +2330,9 @@ sub insertExpr {
     if (!$type || $type eq q() || $type eq "GLOB" || $type eq "CODE") {
         eval {
             if (!defined $theRef) {
-                $dl->add($dirPath . $name, -text => "$name = $label" . "undef");
+                $dl->add($dirPath . $name, -text => "$name = $label" . "undef", @code_item_style);
             } else {
-                $dl->add($dirPath . $name, -text => "$name = $label$theRef");
+                $dl->add($dirPath . $name, -text => "$name = $label$theRef", @code_item_style);
             }
         };
         my $error = $@;
@@ -2254,7 +2346,7 @@ sub insertExpr {
     if ($type eq 'ARRAY' or "$theRef" =~ /ARRAY/) {
         my ($idx);
         $idx = 0;
-        eval { $dl->add($dirPath . $name, -text => "$name = $theRef"); };
+        eval { $dl->add($dirPath . $name, -text => "$name = $theRef", @code_item_style); };
         my $error = $@;
         if ($error) {
             $self->do_alert(msg => "$@");
@@ -2271,7 +2363,8 @@ sub insertExpr {
                             . $self->{'pathSep'}
                             . "__ptkdb_self_path"
                             . $selfCnt++,
-                        -text => "[$idx] = $r REUSED ADDR"
+                        -text => "[$idx] = $r REUSED ADDR",
+                        @code_item_style
                     );
                 };
                 $self->do_alert(msg => "$@") if ($@);
@@ -2292,7 +2385,12 @@ sub insertExpr {
     }
 
     if ("$theRef" !~ /HASH\050\060x[0-9a-f]*\051/o) {
-        eval { $dl->add($dirPath . $self->fixExprPath($name), -text => "$name = $theRef"); };
+        eval {
+            $dl->add(
+                $dirPath . $self->fixExprPath($name), -text => "$name = $theRef",
+                @code_item_style
+            );
+        };
         my $error = $@;
         if ($error) {
             $self->do_alert(msg => "$@");
@@ -2305,7 +2403,7 @@ sub insertExpr {
     my (@theKeys, $idx);
     $idx     = 0;
     @theKeys = sort keys %{$theRef};
-    $dl->add($dirPath . $name, -text => "$name = " . "$theRef");
+    $dl->add($dirPath . $name, -text => "$name = " . "$theRef", @code_item_style);
     $result = 1;
 
     my %builtins = (
@@ -2333,7 +2431,8 @@ sub insertExpr {
                         . $self->{'pathSep'}
                         . "__ptkdb_self_path"
                         . $selfCnt++,
-                    -text => "$theKeys[$idx++] = $r REUSED ADDR"
+                    -text => "$theKeys[$idx++] = $r REUSED ADDR",
+                    @code_item_style
                 );
             };
             console_say("Inserting expressions, encountered bad path $@") if ($@);
@@ -2567,7 +2666,8 @@ sub GotoLine {
     #
     my $okaySub  = sub { $self->DoGoto($self->{'goto_text'}) };
     my $topLevel = $self->{main_window}->Toplevel(-title => "Goto Line?", -overanchor => 'cursor');
-    $self->{goto_text} = $topLevel->Entry()->pack(-side => 'top', -fill => 'both', -expand => 1);
+    $self->{goto_text} = $topLevel->Entry(%{ $self->font_settings('code') })
+        ->pack(-side => 'top', -fill => 'both', -expand => 1);
     $self->{goto_text}->bind('<Return>', $okaySub);    # make a CR do the same thing as pressing an okay
     $self->{goto_text}->focus();
 
@@ -2576,7 +2676,7 @@ sub GotoLine {
     $topLevel->Button(
         -text    => "Okay",
         -command => $okaySub,
-        %{ $self->{'button_font'} },
+        %{ $self->font_settings('gui') },
     )->pack(-side => 'left', -fill => 'both', -expand => 1);
 
     #
@@ -2591,7 +2691,7 @@ sub GotoLine {
 
     $topLevel->Button(
         -text => "Dismiss",
-        %{ $self->{'button_font'} },
+        %{ $self->font_settings('gui') },
         -command => $dismissSub
     )->pack(-side => 'left', -fill => 'both', -expand => 1);
 
@@ -2690,18 +2790,32 @@ sub FindText {
     # Construct a dialog that has an entry field, forward, backward, regex
     # option, okay and cancel buttons
     $top = $self->{main_window}->Toplevel(-title => "Find Text?");
-    $self->{find_text} = $top->Entry()->pack(-side => 'top', -fill => 'both', -expand => 1);
+    $self->{find_text} = $top->Entry(%{ $self->font_settings('code') })
+        ->pack(-side => 'top', -fill => 'both', -expand => 1);
     $frm = $top->Frame()->pack(-side => 'top', -fill => 'both', -expand => 1);
 
     $self->{fwdOrBack} = 'forward';
-    $rad1 = $frm->Radiobutton(-text => "Forward", -value => 1, -variable => \$self->{fwdOrBack});
+    $rad1 = $frm->Radiobutton(
+        -text     => "Forward",
+        -value    => 1,
+        -variable => \$self->{fwdOrBack},
+        %{ $self->font_settings('gui') },
+    );
     $rad1->pack(-side => 'left', -fill => 'both', -expand => 1);
 
-    $rad2 = $frm->Radiobutton(-text => "Backward", -value => 0, -variable => \$self->{fwdOrBack});
+    $rad2 = $frm->Radiobutton(
+        -text     => "Backward",
+        -value    => 0,
+        -variable => \$self->{fwdOrBack},
+        %{ $self->font_settings('gui') },
+    );
     $rad2->pack(-side => 'left', -fill => 'both', -expand => 1);
 
     $regExp = 0;
-    $chk    = $frm->Checkbutton(-text => "RegExp", -variable => \$regExp);
+    $chk    = $frm->Checkbutton(
+        -text => "RegExp", -variable => \$regExp,
+        %{ $self->font_settings('gui') }
+    );
     $chk->pack(-side => 'left', -fill => 'both', -expand => 1);
 
     # Okay and cancel buttons
@@ -2711,14 +2825,14 @@ sub FindText {
     $okayBtn = $top->Button(
         -text    => "Okay",
         -command => sub { $self->FindSearch($self->{find_text}, $okayBtn, $regExp); },
-        %{ $self->{'button_font'} },
+        %{ $self->font_settings('gui') },
     )->pack(-side => 'left', -fill => 'both', -expand => 1);
     $self->{find_text}
         ->bind('<Return>', sub { $self->FindSearch($self->{find_text}, $okayBtn, $regExp); });
 
     $top->Button(
         -text => "Dismiss",
-        %{ $self->{'button_font'} },
+        %{ $self->font_settings('gui') },
         -command => $dismissSub
     )->pack(-side => 'left', -fill => 'both', -expand => 1);
 
@@ -2869,7 +2983,7 @@ sub setupEvalWindow {
     $self->{eval_text}   = $top->Scrolled(
         'TextUndo',
         %{ $self->{'scrollbar_cfg'} },
-        %{ $self->{'eval_text_font'} },
+        %{ $self->font_settings('code') },
         width  => 50,
         height => 10,
         -wrap  => "none",
@@ -2878,7 +2992,8 @@ sub setupEvalWindow {
     $self->{eval_text}->insert('end', $self->{eval_saved_text})
         if exists $self->{eval_saved_text} && defined $self->{eval_saved_text};
 
-    $top->Label(-text, "Results:")->pack(-side => 'top', -fill => 'both', -expand => 'n');
+    $top->Label(-text, "Results:", %{ $self->font_settings('gui') })
+        ->pack(-side => 'top', -fill => 'both', -expand => 'n');
 
     $self->{eval_results} = $top->Scrolled(
         'Text',
@@ -2886,14 +3001,15 @@ sub setupEvalWindow {
         width  => 50,
         height => 10,
         -wrap  => "none",
-        %{ $self->{'eval_text_font'} }
+        %{ $self->font_settings('code') }
     )->pack(-side => 'top', -fill => 'both', -expand => 1);
 
     my $btn = $top->Button(
         -text    => 'Eval...',
         -command => sub {
             $self->{event} = 'reeval';
-        }
+        },
+        %{ $self->font_settings('gui') },
     )->pack(-side => 'left', -fill => 'x', -expand => 1);
 
     $dismissSub = sub {
@@ -2906,17 +3022,22 @@ sub setupEvalWindow {
 
     $top->Button(
         -text    => 'Clear Eval',
-        -command => sub { $self->{eval_text}->delete('0.0', 'end') }
+        -command => sub { $self->{eval_text}->delete('0.0', 'end') },
+        %{ $self->font_settings('gui') },
     )->pack(-side => 'left', -fill => 'x', -expand => 1);
 
     $top->Button(
         -text    => 'Clear Results',
-        -command => sub { $self->{eval_results}->delete('0.0', 'end') }
+        -command => sub { $self->{eval_results}->delete('0.0', 'end') },
+        %{ $self->font_settings('gui') },
     )->pack(-side => 'left', -fill => 'x', -expand => 1);
 
-    $top->Button(-text => 'Dismiss', -command => $dismissSub)
+    $top->Button(-text => 'Dismiss', -command => $dismissSub, %{ $self->font_settings('gui') })
         ->pack(-side => 'left', -fill => 'x', -expand => 1);
-    $top->Checkbutton(-text => 'Hex', -variable => \$self->{hexdump_evals})->pack(-side => 'left');
+    $top->Checkbutton(
+        -text => 'Hex', -variable => \$self->{hexdump_evals},
+        %{ $self->font_settings('gui') }
+    )->pack(-side => 'left');
     $top->geometry($self->simpleGeo());
 }
 
@@ -3483,27 +3604,6 @@ fonts.
     * characters after the color produces an error
     */
     ptkdb.frame2.frame1.rotext.balloon.background: green
-    ptkdb.frame2.frame1.rotext.balloon.font: fixed                       /* Hot Variable Balloon Font */
-
-
-    ptkdb.frame*font: fixed                           /* Menu Bar */
-    ptkdb.frame.menubutton.font: fixed                /* File menu */
-    ptkdb.frame2.frame1.rotext.font: fixed            /* Code Pane */
-    ptkdb.notebook.datapage.frame1.hlist.font: fixed  /* Expression Notebook Page */
-
-    ptkdb.notebook.subspage*font: fixed               /* Subroutine Notebook Page */
-    ptkdb.notebook.brkptspage*entry.font: fixed       /* Delete Breakpoint Buttons */
-    ptkdb.notebook.brkptspage*button.font: fixed      /* Breakpoint Expression Entries */
-    ptkdb.notebook.brkptspage*button1.font: fixed     /* Breakpoint Expression Entries */
-    ptkdb.notebook.brkptspage*checkbutton.font: fixed /* Breakpoint Checkbuttons */
-    ptkdb.notebook.brkptspage*label.font: fixed       /* Breakpoint Checkbuttons */
-
-    ptkdb.toplevel.frame.textundo.font: fixed         /* Eval Expression Entry Window */
-    ptkdb.toplevel.frame1.text.font: fixed            /* Eval Expression Results Window */
-    ptkdb.toplevel.button.font:  fixed                /* "Eval..." Button */
-    ptkdb.toplevel.button1.font: fixed                /* "Clear Eval" Button */
-    ptkdb.toplevel.button2.font: fixed                /* "Clear Results" Button */
-    ptkdb.toplevel.button3.font: fixed                /* "Clear Dismiss" Button */
 
     /*
     * Background color for where the debugger has stopped
@@ -3515,11 +3615,6 @@ fonts.
     */
     ptkdb*breaktagcolor*background: yellow
     ptkdb*disabledbreaktagcolor*background: white
-    /*
-    * Font for where the debugger has stopped
-    */
-    ptkdb*stopfont: -*-fixed-bold-*-*-*-*-*-*-*-*-*-*-*
-
     /*
     * Background color for the search tag
     */
@@ -3539,7 +3634,11 @@ Sets the background color of a disabled breakpoint
 
 =item PTKDB_CODE_FONT
 
-Sets the font of the Text in the code pane.
+Sets the fixed font used for code, expressions, and filenames. Defaults to C<Courier 10>.
+
+=item PTKDB_GUI_FONT
+
+Sets the non-fixed font used for GUI elements such as buttons, menus, and labels. Defaults to the normal Tk widget font.
 
 =item PTKDB_CODE_SIDE
 
@@ -3547,14 +3646,6 @@ Sets which side the code pane is packed onto.  Defaults to 'left'.
 Can be set to 'left', 'right', 'top', 'bottom'.
 
 Overrides the Xresource ptkdb*codeside: I<side>.
-
-=item PTKDB_EXPRESSION_FONT
-
- Sets the font used in the expression notebook page.
-
-=item PTKDB_EVAL_FONT
-
- Sets the font used in the Expression Eval Window
 
 =item PTKDB_EVAL_DUMP_INDENT
 
