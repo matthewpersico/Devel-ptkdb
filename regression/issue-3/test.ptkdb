@@ -1,35 +1,72 @@
 ## no critic (TestingAndDebugging::RequireUseStrict)
 $ptkdb_state = {
-                 'version' => '2.0.0',
+                 'files' => {
+                              'blib/lib/Devel/ptkdb.pm' => [
+                                                             {
+                                                               'value' => '1',
+                                                               'text' => '    my %args;
+',
+                                                               'fname' => 'blib/lib/Devel/ptkdb.pm',
+                                                               'type' => 'user',
+                                                               'expr' => undef,
+                                                               'line' => 126
+                                                             },
+                                                             {
+                                                               'expr' => undef,
+                                                               'line' => 1512,
+                                                               'type' => 'user',
+                                                               'fname' => 'blib/lib/Devel/ptkdb.pm',
+                                                               'text' => '    my $summy  = 6;
+',
+                                                               'value' => '1'
+                                                             }
+                                                           ],
+                              'regression/issue-3/test.pl' => [
+                                                                {
+                                                                  'type' => 'user',
+                                                                  'expr' => undef,
+                                                                  'line' => 10,
+                                                                  'value' => '1',
+                                                                  'fname' => 'regression/issue-3/test.pl',
+                                                                  'text' => 'my $h     = { 43, 23 };
+'
+                                                                },
+                                                                {
+                                                                  'type' => 'user',
+                                                                  'expr' => undef,
+                                                                  'line' => 12,
+                                                                  'value' => '1',
+                                                                  'fname' => 'regression/issue-3/test.pl',
+                                                                  'text' => 'my %h     = (
+'
+                                                                }
+                                                              ]
+                            },
                  'eval_saved_text' => undef,
-                 'main_win_geometry' => '800x600+1520+775',
+                 'main_win_geometry' => '1210x600+73+102',
                  'expr_list' => [
                                   {
-                                    'depth' => -1,
-                                    'expr' => '%h'
+                                    'expr' => '%h',
+                                    'depth' => -1
+                                  },
+                                  {
+                                    'expr' => '$dummy',
+                                    'depth' => -1
                                   },
                                   {
                                     'depth' => -1,
-                                    'expr' => '$dummy'
+                                    'expr' => '$h'
                                   },
                                   {
-                                    'expr' => '$h',
+                                    'depth' => -1,
+                                    'expr' => '$a'
+                                  },
+                                  {
+                                    'expr' => '$b',
                                     'depth' => -1
                                   }
                                 ],
-                 'files' => {
-                              'regression/issue-3/test.pl' => [
-                                                                {
-                                                                  'value' => '1',
-                                                                  'text' => 'my %h     = (
-',
-                                                                  'line' => 12,
-                                                                  'fname' => 'regression/issue-3/test.pl',
-                                                                  'expr' => undef,
-                                                                  'type' => 'user'
-                                                                }
-                                                              ]
-                            }
+                 'version' => '2.0.0'
                };
 
 return $ptkdb_state;  # prevents 'only used once' messages
