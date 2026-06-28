@@ -348,7 +348,7 @@ sub restore_breakpoints_from_save {
         my $breakpoints = _dbline_hash($fname);
         next unless $lines && $breakpoints;
 
-        my $offset = debugger_injected_line_offset();
+        my $offset = debugger_injected_line_offset($fname);
 
         my @newList = fix_breakpoints(
             fname  => $fname,

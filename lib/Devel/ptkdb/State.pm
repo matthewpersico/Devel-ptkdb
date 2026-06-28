@@ -224,7 +224,7 @@ sub save_state_callback {
     return unless defined $chosen;
 
     eval { $self->save_state_file($chosen) };
-    $ptkdb_obj->do_alertt(msg => $@) if $@;
+    $ptkdb_obj->do_alert(msg => $@) if $@;
 }
 
 sub restore_state_callback {
