@@ -8,17 +8,17 @@ set -eo pipefail
 declare git_repo='/home/matthew/gits/github/matthewpersico/Devel-ptkdb/wt/reorg'
 declare gpt_work='/mnt/c/Users/matth/Documents/Codex/2026-06-27/is/work/'
 
-if [[ $1 =~ 'to-chat' ]]; then
-   src=$git_repo
-   dst=$gpt_work
-elif [[ $1 =~ 'from-chat' ]]; then
-   dst=$git_repo
-   src=$gpt_work
+if [[ $1 =~ 'to-gpt' ]]; then
+    src=$git_repo
+    dst=$gpt_work
+elif [[ $1 =~ 'from-gpt' ]]; then
+    src=$gpt_work
+    dst=$git_repo
 else
-    cmd-echo --ec "Usage: $0 [to|from]chat"
+    cmd-echo --ec "Usage: $0 [to|from]-gpt"
     exit 1
 fi
 
-$REALGIT -C "$src" ls-files |
-rsync -a --itemize-changes --files-from=- "$src/" "$dst/" |
-grep '>'
+$REALGIT -C "$git_repo" ls-files |
+    rsync -a --itemize-changes --files-from=- "$src/" "$dst/" |
+    grep '>'
