@@ -58,6 +58,28 @@ my $dumpFunc = (
     ? 'Dumpxs'
     : 'Dump'
 );
+
+my %KEY_BINDINGS = (
+    close_window_and_run => { event => '<Control-w>', accelerator => 'Ctrl+W' },
+    enter_expression     => { event => '<Control-e>', accelerator => 'Ctrl+E' },
+    eval_window          => { event => '<Control-E>', accelerator => 'Ctrl+Shift+E' },
+    find_text            => { event => '<Control-f>', accelerator => 'Ctrl+F' },
+    focus_code           => { event => '<Control-1>', accelerator => 'Ctrl+1' },
+    focus_expr           => { event => '<Control-3>', accelerator => 'Ctrl+3' },
+    focus_quick_expr     => { event => '<Control-2>', accelerator => 'Ctrl+2' },
+    goto_line            => { event => '<Control-g>', accelerator => 'Ctrl+G' },
+    interrupt            => { event => '<Control-c>', accelerator => 'Ctrl+C' },
+    open_file            => { event => '<Control-o>', accelerator => 'Ctrl+O' },
+    quit                 => { event => '<Control-q>', accelerator => 'Ctrl+Q' },
+    restart              => { event => '<Control-r>', accelerator => 'Ctrl+R' },
+    run                  => { event => '<F5>',        accelerator => 'F5' },
+    run_to_here          => { event => '<Shift-F5>',  accelerator => 'Shift+F5' },
+    step_in              => { event => '<F11>',       accelerator => 'F11' },
+    step_out             => { event => '<Shift-F11>', accelerator => 'Shift+F11' },
+    step_over            => { event => '<F10>',       accelerator => 'F10' },
+    toggle_breakpoint    => { event => '<F9>',        accelerator => 'F9' },
+);
+
 # ===========================================================================
 # Object static methods
 
@@ -206,6 +228,23 @@ sub obj {
     return $_ptkdb_obj;
 }
 
+sub key_event {
+    my ($self, $name) = @_;
+    return $KEY_BINDINGS{$name}->{event};
+}
+
+sub key_accelerator {
+    my ($self, $name) = @_;
+    return $KEY_BINDINGS{$name}->{accelerator};
+}
+
+sub bind_key {
+    my ($self, $name, $callback) = @_;
+
+    $self->{main_window}->bind($self->key_event($name), $callback);
+    return;
+}
+
 # ===========================================================================
 # Object instance methods
 
@@ -261,16 +300,16 @@ sub new {
 
     $self->{'pathSep'}            = '\x00';
     $self->{'pathSepReplacement'} = "\0x01";
-    $self->{'step_in_keys'}       = ['<Shift-F9>', '<Alt-s>'];    # step into a subroutine
-    $self->{'step_over_keys'}     = ['<F9>',       '<Alt-n>'];    # step over a subroutine
-    $self->{'return_keys'}        = ['<Alt-u>'];                  # return from a subroutine
+    $self->{'step_in_keys'}       = [$self->key_event('step_in')];      # step into a subroutine
+    $self->{'step_over_keys'}     = [$self->key_event('step_over')];    # step over a subroutine
+    $self->{'return_keys'}        = [$self->key_event('step_out')];     # return from a subroutine
 
     # These will be bound only to the code pane, so that other widgets can have
     # Their own popup menus
-    $self->{'step_in_mouse'}       = ['<Button-3>'];            # step into a subroutine
-    $self->{'step_over_mouse'}     = ['<Shift-Button-3>'];      # step over a subroutine
-    $self->{'return_mouse'}        = ['<Control-Button-3>'];    # return from a subroutine
-    $self->{'toggle_breakpt_keys'} = ['<Alt-b>'];               # set or unset a breakpoint
+    $self->{'step_in_mouse'}       = ['<Button-3>'];                             # step into a subroutine
+    $self->{'step_over_mouse'}     = ['<Shift-Button-3>'];                       # step over a subroutine
+    $self->{'return_mouse'}        = ['<Control-Button-3>'];                     # return from a subroutine
+    $self->{'toggle_breakpt_keys'} = [$self->key_event('toggle_breakpoint')];    # set or unset a breakpoint
 
     # Fonts used in the displays
     $self->{'button_font'}
@@ -599,7 +638,7 @@ sub setup_main_window {
 
     $self->setup_options();    # must be done after MainWindow and before other frames are setup
 
-    $self->{main_window}->bind('<Control-c>', \&DB::dbint_handler);
+    $self->bind_key('interrupt', \&DB::dbint_handler);
 
     #
     # Bind our 'quit' routine to a close command from the window manager (Alt-F4)
@@ -787,12 +826,12 @@ sub close_ptkdb_window_and_run {
 sub setup_menu_bar_item_file {
     my ($self) = @_;
 
-    my $mw = $self->{main_window};
-    $mw->bind('<Alt-g>'     => sub { $self->GotoLine(); });
-    $mw->bind('<Control-f>' => sub { $self->FindText(); });
-    $mw->bind('<Control-r>' => sub { $self->DoRestart(); });
-    $mw->bind('<Alt-q>'     => sub { $self->{'event'} = 'quit' });
-    $mw->bind('<Alt-w>'     => sub { $self->close_ptkdb_window_and_run; });
+    $self->bind_key('open_file',            sub { $self->DoOpen(); });
+    $self->bind_key('goto_line',            sub { $self->GotoLine(); });
+    $self->bind_key('find_text',            sub { $self->FindText(); });
+    $self->bind_key('restart',              sub { $self->DoRestart(); });
+    $self->bind_key('quit',                 sub { $self->DoQuit(); });
+    $self->bind_key('close_window_and_run', sub { $self->close_ptkdb_window_and_run; });
 
     my $items = [
         ['command' => 'About...',      -command => sub { $self->DoAbout(); }],
@@ -800,7 +839,7 @@ sub setup_menu_bar_item_file {
         "-",
 
         [   'command'    => 'Open',
-            -accelerator => 'Alt+O',
+            -accelerator => $self->key_accelerator('open_file'),
             -underline   => 0,
             -command     => sub { $self->DoOpen(); }
         ],
@@ -817,12 +856,12 @@ sub setup_menu_bar_item_file {
 
         [   'command'    => 'Goto Line...',
             -underline   => 0,
-            -accelerator => 'Alt-g',
+            -accelerator => $self->key_accelerator('goto_line'),
             -command     => sub { $self->GotoLine(); },
         ],
 
         [   'command'    => 'Find Text...',
-            -accelerator => 'Ctrl-f',
+            -accelerator => $self->key_accelerator('find_text'),
             -underline   => 0,
             -command     => sub { $self->FindText(); }
         ],
@@ -832,13 +871,13 @@ sub setup_menu_bar_item_file {
         "-",
 
         [   'command'    => 'Close Window and Run',
-            -accelerator => 'Alt+W',
+            -accelerator => $self->key_accelerator('close_window_and_run'),
             -underline   => 6,
             -command     => sub { $self->close_ptkdb_window_and_run(); }
         ],
 
         [   'command'    => 'Quit...',
-            -accelerator => 'Alt+Q',
+            -accelerator => $self->key_accelerator('quit'),
             -underline   => 0,
             -command     => sub { $self->DoQuit(); }
         ]
@@ -850,40 +889,26 @@ sub setup_menu_bar_item_file {
 sub setup_menu_bar_item_control {
     my ($self) = @_;
 
-    my $mw = $self->{main_window};
-
     my $clearAllBkptsSub = sub {
         $self->removeAllBreakpoints($self->{current_file});
         DB::clear_all_breakpoint_info();
     };
 
-    $mw->bind('<Alt-r>'     => $self->{shared_callbacks}->{runSub});
-    $mw->bind('<Alt-t>'     => $self->{shared_callbacks}->{runToSub});
-    $mw->bind('<Control-b>' => sub { $self->SetBreakPoint; });
-
-    # step over a subroutine
-    for ('<F9>', '<Alt-n>', '<Shift-Button-3>') {
-        $mw->bind($_ => $self->{shared_callbacks}->{stepOverSub});
-    }
-
-    # step into a subroutine
-    for ('<Shift-F9>', '<Alt-s>', '<Button-3>') {
-        $mw->bind($_ => $self->{shared_callbacks}->{stepInSub});
-    }
-
-    # return from a subroutine
-    for ('<Alt-u>', '<Control-Button-3>') {
-        $mw->bind($_ => $self->{shared_callbacks}->{returnSub});
-    }
+    $self->bind_key('run',               $self->{shared_callbacks}->{runSub});
+    $self->bind_key('run_to_here',       $self->{shared_callbacks}->{runToSub});
+    $self->bind_key('toggle_breakpoint', sub { $self->SetBreakPoint; });
+    $self->bind_key('step_over',         $self->{shared_callbacks}->{stepOverSub});
+    $self->bind_key('step_in',           $self->{shared_callbacks}->{stepInSub});
+    $self->bind_key('step_out',          $self->{shared_callbacks}->{returnSub});
 
     my $items = [
         [   'command'    => 'Run',
-            -accelerator => 'Alt+r',
+            -accelerator => $self->key_accelerator('run'),
             -underline   => 0,
             -command     => $self->{shared_callbacks}->{runSub}
         ],
         [   'command'    => 'Run To Here',
-            -accelerator => 'Alt+t',
+            -accelerator => $self->key_accelerator('run_to_here'),
             -underline   => 5,
             -command     => $self->{shared_callbacks}->{runToSub}
         ],
@@ -891,7 +916,7 @@ sub setup_menu_bar_item_control {
         [   'command'    => 'Set Breakpoint',
             -underline   => 4,
             -command     => sub { $self->SetBreakPoint; },
-            -accelerator => 'Ctrl-b'
+            -accelerator => $self->key_accelerator('toggle_breakpoint')
         ],
         [   'command' => 'Clear Breakpoint',
             -command  => sub { $self->UnsetBreakPoint }
@@ -902,23 +927,23 @@ sub setup_menu_bar_item_control {
         ],
         '-',
         [   'command'    => 'Step Over',
-            -accelerator => 'Alt+N',
+            -accelerator => $self->key_accelerator('step_over'),
             -underline   => 0,
             -command     => $self->{shared_callbacks}->{stepOverSub}
         ],
         [   'command'    => 'Step In',
-            -accelerator => 'Alt+S',
+            -accelerator => $self->key_accelerator('step_in'),
             -underline   => 5,
             -command     => $self->{shared_callbacks}->{stepInSub}
         ],
         [   'command'    => 'Return',
-            -accelerator => 'Alt+U',
+            -accelerator => $self->key_accelerator('step_out'),
             -underline   => 3,
             -command     => $self->{shared_callbacks}->{returnSub}
         ],
         '-',
         [   'command'    => 'Restart...',
-            -accelerator => 'Ctrl-r',
+            -accelerator => $self->key_accelerator('restart'),
             -underline   => 0,
             -command     => sub { $self->DoRestart(); }
         ],
@@ -935,10 +960,8 @@ sub setup_menu_bar_item_control {
 sub setup_menu_bar_item_data {
     my ($self) = @_;
 
-    my $mw = $self->{main_window};
     # Set up the stated accelerators...
-    $mw->bind('<Alt-e>'     => sub { $self->enterExpr() });
-    $mw->bind('<Control-d>' => sub { $self->deleteExpr() });
+    $self->bind_key('enter_expression', sub { $self->enterExpr() });
 
     # When we were using an Hlist (version 1.1091), <Delete> wasn't mapped and
     # didn't cause any change to the expressions displayed. When we cut over to
@@ -947,16 +970,16 @@ sub setup_menu_bar_item_data {
     # result was an entry that disappeared off the screen, but not from our
     # data structures, so it reappeared after the next line was stepped. So, we
     # are mappping to trap and gracefully handle it.
-    $mw->bind('<Delete>' => sub { $self->deleteExpr(); });
-    $mw->bind('<F8>', sub { $self->setupEvalWindow(); });
+    $self->{main_window}->bind('<Delete>' => sub { $self->deleteExpr(); });
+    $self->bind_key('eval_window', sub { $self->setupEvalWindow(); });
 
     my $items = [
         [   'command'    => 'Enter Expression',
-            -accelerator => 'Alt+E',
+            -accelerator => $self->key_accelerator('enter_expression'),
             -command     => sub { $self->enterExpr() }
         ],
         [   'command'    => 'Delete Expression',
-            -accelerator => 'Ctrl+D',
+            -accelerator => 'Delete',
             -command     => sub { $self->deleteExpr() }
         ],
         [   'command' => 'Delete All Expressions',
@@ -967,7 +990,7 @@ sub setup_menu_bar_item_data {
         ],
         '-',
         [   'command'    => 'Expression Eval Window...',
-            -accelerator => 'F8',
+            -accelerator => $self->key_accelerator('eval_window'),
             -command     => sub { $self->setupEvalWindow(); }
         ],
     ];
@@ -984,12 +1007,9 @@ sub setup_menu_bar_item_bookmarks {
     my $bkMarkSub = sub { $self->add_bookmark(); };
 
     $self->{'bookmarks_menu'}->command(
-        -label       => "Add Bookmark",
-        -accelerator => 'Alt+k',
-        -command     => $bkMarkSub
+        -label   => "Add Bookmark",
+        -command => $bkMarkSub
     );
-
-    $self->{'main_window'}->bind('<Alt-k>', $bkMarkSub);
 
     $self->{'bookmarks_menu'}->command(
         -label   => "Edit Bookmarks",
@@ -1018,15 +1038,20 @@ sub setup_menu_bar_item_windows {
     my ($csub) = sub { $self->{'quick_entry'}->focus() };
     my ($dsub) = sub { $self->{'entry'}->focus() };
 
-    my $mw = $self->{main_window};
-    $mw->bind('<Alt-0>', $bsub);
-    $mw->bind('<F9>',    $csub);
-    $mw->bind('<F11>',   $dsub);
+    $self->bind_key('focus_code',       $bsub);
+    $self->bind_key('focus_quick_expr', $csub);
+    $self->bind_key('focus_expr',       $dsub);
 
     my $items = [
-        ['command' => 'Code Pane',   -accelerator => 'Alt+0', -command => $bsub],
-        ['command' => 'Quick Entry', -accelerator => 'F9',    -command => $csub],
-        ['command' => 'Expr Entry',  -accelerator => 'F11',   -command => $dsub]
+        [   'command' => 'Code Pane', -accelerator => $self->key_accelerator('focus_code'),
+            -command  => $bsub
+        ],
+        [   'command' => 'Quick Entry', -accelerator => $self->key_accelerator('focus_quick_expr'),
+            -command  => $csub
+        ],
+        [   'command' => 'Expr Entry', -accelerator => $self->key_accelerator('focus_expr'),
+            -command  => $dsub
+        ]
     ];
     return $items;
 }
@@ -3233,7 +3258,7 @@ selection, the text of that selection will be evaluated.
  heirarchically for expression that result in hashes or lists.  Double
  clicking on such an expression will cause it to collapse; double
  clicking again will cause the expression to expand. Expressions are
- entered through B<Enter Expr> entry, or by Alt-E when text is
+ entered through B<Enter Expr> entry, or by Ctrl-E when text is
  selected in the code pane.
 
  The B<Quick Expr> entry, will take an expression, evaluate it, and
