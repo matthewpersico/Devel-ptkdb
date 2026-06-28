@@ -117,17 +117,16 @@ sub _console_prompt {
     }
     my $msg_string = join("\n", map { split(/\n/, $_) } @msg);
     chomp $msg_string;
-
-    return ($args{_id} . ($args{_where} ? " (in $args{where})" : q()) . "> $msg_string" . qq(\n));
+    return ($args{_id} . ($args{_where} ? " (in $args{_where})" : q()) . "> $msg_string" . qq(\n));
 }
 
 sub console_say {
     my %args;
     if (scalar(@_) == 1) {
         # simple text print
-        $args{msg}   = $_[0];
-        $args{_id}   = 'ptkdb';
-        $args{where} = '';
+        $args{msg}    = $_[0];
+        $args{_id}    = 'ptkdb';
+        $args{_where} = '';
     } else {
         %args = (
             _id    => 'console_say',
@@ -1460,9 +1459,43 @@ sub change_breakpoint_tag {
 
 }
 
+sub _sub_list_sort {
+
+    # We want the 'main' namespace to sort to the top because that is script
+    # being debugged.
+    if ($a eq 'main' and $b eq 'main') {
+        return 0;
+    } elsif ($a eq 'main') {
+        return -1;
+    } elsif ($b eq 'main') {
+        return 1;
+    } else {
+        if (    $a =~ m/:\d+\]$/
+            and $b =~ m/:\d+\]$/) {
+            # This bit sorts entries such as
+            #
+            # __ANON__[Foo:1443] and __ANON__[Foo:23]
+            #
+            # in numeric order because the non numeric parts match instead of
+            # straight alphbetic, in which case they're backwards.
+            my @a  = split(/:/, $a);
+            my @b  = split(/:/, $b);
+            my $ja = join(':', @a[0 .. scalar(@a) - 2]);
+            my $jb = join(':', @b[0 .. scalar(@b) - 2]);
+            if ($ja eq $jb) {
+                chop $a[-1];
+                chop $b[-1];
+                return $a[-1] <=> $b[-1];
+            }
+        }
+    }
+    return lc($a) cmp lc($b);
+}
+
 # Sort the entries case-insensitively, floating the 'main' namespace to the top.
 sub sub_list_sort {
-    my @sorted = sort { $a eq 'main' ? -1 : $b eq 'main' ? 1 : lc($a) cmp lc($b) } @_;
+    my $summy  = 6;
+    my @sorted = sort _sub_list_sort @_;
     return (wantarray ? @sorted : \@sorted);
 }
 
