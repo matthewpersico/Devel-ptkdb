@@ -482,6 +482,7 @@ sub do_alert {
     my $previous_focus = $self->{main_window}->focusCurrent();
     my $top            = $self->{main_window}->Toplevel(-title => $args{title});
 
+    $top->iconimage($self->{window_icon_image}) if $self->{window_icon_image};
     $top->transient($self->{main_window});
 
     $top->Label(
