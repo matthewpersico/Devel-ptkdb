@@ -24,7 +24,6 @@ use Tk::Dialog;
 use Tk::HList;
 use Tk::NoteBook;
 use Tk::ROText;
-use Tk::Table;
 use Tk::TextUndo;
 use Tk::Tree;
 
@@ -254,13 +253,20 @@ sub font_settings {
     );
     my %default_font = (
         code => 'Courier 10',
-        gui  => undef,
+        gui  => 'Helvetica 10',
     );
 
     confess "Unknown font type '$type'" unless exists $font_env{$type};
 
     my $font = $ENV{ $font_env{$type} } || $default_font{$type};
     return $font ? { -font => $font } : {};
+}
+
+sub font_value {
+    my ($self, $type) = @_;
+
+    my $settings = $self->font_settings($type);
+    return $settings->{'-font'};
 }
 
 sub apply_font_settings {
@@ -274,6 +280,53 @@ sub apply_font_settings {
         for my $child ($widget->children) {
             $self->apply_font_settings($child, $type);
         }
+    }
+
+    return;
+}
+
+sub apply_notebook_tab_font {
+    my ($self, $label, $widget) = @_;
+    $widget ||= $self->{'notebook'};
+
+    return unless $widget;
+
+    my $settings = $self->font_settings('gui');
+    return unless %{$settings};
+
+    my $text         = eval { $widget->cget('-text') };
+    my $widget_label = eval { $widget->cget('-label') };
+    if ((defined $text && $text eq $label) || (defined $widget_label && $widget_label eq $label)) {
+        eval { $widget->configure(%{$settings}); };
+    }
+
+    if ($widget->can('children')) {
+        for my $child ($widget->children) {
+            $self->apply_notebook_tab_font($label, $child);
+        }
+    }
+
+    return;
+}
+
+sub apply_menu_font {
+    my ($self, $menu_widget) = @_;
+
+    return unless $menu_widget;
+
+    my $settings = $self->font_settings('gui');
+    return unless %{$settings};
+
+    my $menu = eval { $menu_widget->menu } || $menu_widget;
+    return unless $menu;
+
+    eval { $menu->configure(%{$settings}); };
+
+    my $last_index = eval { $menu->index('last') };
+    return unless defined $last_index;
+
+    for my $index (0 .. $last_index) {
+        eval { $menu->entryconfigure($index, %{$settings}); };
     }
 
     return;
@@ -350,8 +403,6 @@ sub new {
     $self->{'expr_list'} = [];
 
     $self->{'brkpt_cnt'} = 0;
-    # open slots for adding breakpoints to the table
-    $self->{'brkpt_slots'} = [];
 
     $self->{'user_window_init_list'}     = [];
     $self->{'user_window_DB_entry_list'} = [];
@@ -522,6 +573,30 @@ sub make_file_save_name {
 
     $filename =~ s/\.(?:pl|pm|t)\z//;
     return "$filename.ptkdb";
+}
+
+sub code_source_label {
+    my ($self, $filename) = @_;
+
+    my $normalized_filename = realpath($filename)
+        || File::Spec->canonpath(File::Spec->rel2abs($filename));
+
+    for my $inc_name (sort keys %INC) {
+        next unless $inc_name =~ /\.pm\z/;
+        next unless defined $INC{$inc_name} && !ref $INC{$inc_name};
+
+        my $normalized_inc_path = realpath($INC{$inc_name})
+            || File::Spec->canonpath(File::Spec->rel2abs($INC{$inc_name}));
+        next unless defined $normalized_inc_path;
+        next unless $normalized_inc_path eq $normalized_filename;
+
+        my $module = $inc_name;
+        $module =~ s{[/\\]}{::}g;
+        $module =~ s/\.pm\z//;
+        return $module;
+    }
+
+    return basename($filename);
 }
 
 sub restore_state_file {
@@ -1083,6 +1158,7 @@ sub setup_menu_bar_item_bookmarks {
     do $self->{BookMarksPath};   # eval the file
 
     $self->add_bookmark_items(@$ptkdb_bookmarks);
+    $self->apply_menu_font($self->{'bookmarks_menu'});
 
 }
 
@@ -1131,6 +1207,7 @@ sub setup_menu_bar {
         -anchor => 'nw',
         -padx   => 2
     );
+    $self->apply_menu_font($self->{file_menu_button});
 
     # Control menu
     $self->{control_menu_button} = $mb->Menubutton(
@@ -1143,6 +1220,7 @@ sub setup_menu_bar {
         'left',
         -padx => 2
     );
+    $self->apply_menu_font($self->{control_menu_button});
 
     # Data Menu
     $self->{data_menu_button} = $mb->Menubutton(
@@ -1154,6 +1232,7 @@ sub setup_menu_bar {
         -side => 'left',
         -padx => 2
     );
+    $self->apply_menu_font($self->{data_menu_button});
 
     # Stack menu - list of all current stack frames. Generated on the fly.
     $self->{stack_menu} = $mb->Menubutton(
@@ -1164,6 +1243,7 @@ sub setup_menu_bar {
         -side => 'left',
         -padx => 2
     );
+    $self->apply_menu_font($self->{stack_menu});
 
     # Bookmarks menu
     $self->{bookmarks_menu} = $mb->Menubutton(
@@ -1175,9 +1255,10 @@ sub setup_menu_bar {
         -padx => 2
     );
     $self->setup_menu_bar_item_bookmarks();
+    $self->apply_menu_font($self->{bookmarks_menu});
 
     # Windows Menu
-    $mb->Menubutton(
+    my $windows_menu_button = $mb->Menubutton(
         -text      => 'Windows',
         -menuitems => $self->setup_menu_bar_item_windows,
         %{ $self->font_settings('gui') },
@@ -1185,6 +1266,7 @@ sub setup_menu_bar {
         -side => 'left',
         -padx => 2
     );
+    $self->apply_menu_font($windows_menu_button);
 }
 
 sub setup_button_bar {
@@ -1364,6 +1446,8 @@ sub add_bookmark_items {
         );
         push @{ $self->{'bookmarks'} }, $item;
     }
+
+    $self->apply_menu_font($menu);
 }
 
 #
@@ -1718,16 +1802,58 @@ sub setup_breakpts_page {
     my ($self) = @_;
 
     $self->{'breakpts_page'} = $self->{'notebook'}->add("brkptspage", -label => "BrkPts");
+    $self->apply_notebook_tab_font("BrkPts");
 
-    $self->{'breakpts_table'}
-        = $self->{'breakpts_page'}->Table(-columns => 1, -scrollbars => 'se')->pack(
+    my $container = $self->{'breakpts_page'}->Frame()->pack(
         -side   => 'top',
         -fill   => 'both',
-        -expand => 1
-        );
+        -expand => 1,
+    );
 
-    $self->{'breakpts_table_data'} = {};    # controls addressed by "fname:lineno"
+    my $canvas    = $container->Canvas(-highlightthickness => 0);
+    my $scrollbar = $container->Scrollbar(
+        -orient  => 'vertical',
+        -command => ['yview', $canvas],
+    );
+    $canvas->configure(-yscrollcommand => ['set', $scrollbar]);
 
+    $scrollbar->pack(-side => 'right', -fill => 'y');
+    $canvas->pack(-side => 'left', -fill => 'both', -expand => 1);
+
+    my $rows_frame  = $canvas->Frame();
+    my $rows_window = $canvas->createWindow(0, 0, -anchor => 'nw', -window => $rows_frame);
+
+    $rows_frame->bind(
+        '<Configure>' => sub {
+            $canvas->configure(-scrollregion => [$canvas->bbox('all')]);
+        }
+    );
+    $canvas->bind(
+        '<Configure>' => sub {
+            $canvas->itemconfigure($rows_window, -width => $canvas->width);
+        }
+    );
+
+    $self->{'breakpts_row_data'}   = {};            # controls addressed by "fname:lineno"
+    $self->{'breakpts_canvas'}     = $canvas;
+    $self->{'breakpts_rows_frame'} = $rows_frame;
+
+}
+
+sub resize_breakpoint_rows {
+    my ($self) = @_;
+
+    my $width = eval { $self->{'breakpts_canvas'}->width } || 0;
+    return unless $width > 1;
+
+    for my $breakpoint_data (values %{ $self->{'breakpts_row_data'} }) {
+        my $frame = $breakpoint_data->{'frm'};
+        next unless $frame;
+
+        eval { $frame->configure(-width => $width); };
+    }
+
+    return;
 }
 
 sub setup_frames {
@@ -1791,10 +1917,16 @@ sub setup_frames {
     #
     # Notebook
     #
+    if (my $gui_font = $self->font_value('gui')) {
+        $mw->optionAdd('*NoteBook*font' => $gui_font, 80);
+        $mw->optionAdd('*NoteBook*Font' => $gui_font, 80);
+    }
+
     $self->{'notebook'} = $mw->NoteBook();
     $self->{'notebook'}->configure(
         -width => $half_width,
     );
+    eval { $self->{'notebook'}->configure(%{ $self->font_settings('gui') }); };
     $self->{'notebook'}->packPropagate(0);
     $self->{'notebook'}->pack(-side => $codeSide, -fill => 'both', -expand => 1);
 
@@ -1802,6 +1934,7 @@ sub setup_frames {
     # tab for the data entries
     #
     $self->{'data_page'} = $self->{'notebook'}->add("datapage", -label => "Exprs");
+    $self->apply_notebook_tab_font("Exprs");
 
     #
     # frame, entry and label for quick expressions
@@ -1844,6 +1977,14 @@ sub setup_frames {
     $self->{'subs_page'}           = $self->{'notebook'}->add(
         "subspage", -label => "Subs",
         -createcmd => sub { $self->setup_subs_page }
+    );
+    $self->apply_notebook_tab_font("Subs");
+    $mw->afterIdle(
+        sub {
+            $self->apply_notebook_tab_font("Exprs");
+            $self->apply_notebook_tab_font("Subs");
+            $self->apply_notebook_tab_font("BrkPts");
+        }
     );
 
     #
@@ -2053,21 +2194,20 @@ sub insertBreakpoint {
 
 sub add_brkpt_to_brkpt_page {
     my ($self, $brkpt) = @_;
-    my ($btn,  $fname,   $index, $frm, $upperFrame, $lowerFrame);
-    my ($row,  $btnName, $width);
+    my ($btn, $fname, $index, $frm, $upperFrame, $lowerFrame);
+    my ($btnName);
 
     #
     # Add the breakpoint to the breakpoints page
     #
     ($fname, $index) = @$brkpt{ 'fname', 'line' };
-    return if exists $self->{'breakpts_table_data'}->{"$fname:$index"};
+    return if exists $self->{'breakpts_row_data'}->{"$fname:$index"};
     $self->{'brkpt_cnt'} += 1;
 
-    $btnName = $fname;
-    $btnName =~ s/.*\/([^\/]*)$/$1/o;
+    $btnName = $self->code_source_label($fname);
 
-    # Take the last leaf of the pathname.
-    $frm        = $self->{'breakpts_table'}->Frame(-relief => 'raised');
+    # Use module names for loaded modules, and basename for ordinary files.
+    $frm        = $self->{'breakpts_rows_frame'}->Frame(-relief => 'raised');
     $upperFrame = $frm->Frame()->pack(-side => 'top', '-fill' => 'x', -expand => 1);
 
     $btn = $upperFrame->Checkbutton(
@@ -2102,36 +2242,22 @@ sub add_brkpt_to_brkpt_page {
 
     $frm->pack(-side => 'top', -fill => 'x', -expand => 1);
 
-    $row = pop @{ $self->{'brkpt_slots'} } or $row = $self->{'brkpt_cnt'};
-
-    $self->{'breakpts_table'}->put($row, 1, $frm);
-
-    $self->{'breakpts_table_data'}->{"$fname:$index"}->{'frm'} = $frm;
-    $self->{'breakpts_table_data'}->{"$fname:$index"}->{'row'} = $row;
+    $self->{'breakpts_row_data'}->{"$fname:$index"}->{'frm'} = $frm;
+    $self->resize_breakpoint_rows();
 
     $self->{'main_window'}->update;
-
-    $width = $frm->width;
-
-    if ($width > $self->{'breakpts_table'}->width) {
-        $self->{'notebook'}->configure(-width => $width);
-    }
 }
 
 sub remove_brkpt_from_brkpt_page {
     my ($self, $fname, $idx) = @_;
-    my ($table);
 
-    $table = $self->{'breakpts_table'};
-
-    # Delete the breakpoint control in the breakpoints window
-    $table->put($self->{'breakpts_table_data'}->{"$fname:$idx"}->{'row'}, 1);    # delete?
-
-    # Add this now empty slot to the list of ones we have open
-    push @{ $self->{'brkpt_slots'} }, $self->{'breakpts_table_data'}->{"$fname:$idx"}->{'row'};
-    $self->{'brkpt_slots'} = [sort { $b <=> $a } @{ $self->{'brkpt_slots'} }];
-    delete $self->{'breakpts_table_data'}->{"$fname:$idx"};
+    my $frame = $self->{'breakpts_row_data'}->{"$fname:$idx"}->{'frm'};
+    $frame->destroy if $frame;
+    delete $self->{'breakpts_row_data'}->{"$fname:$idx"};
     $self->{'brkpt_cnt'} -= 1;
+    $self->{'breakpts_canvas'}
+        ->configure(-scrollregion => [$self->{'breakpts_canvas'}->bbox('all')])
+        if $self->{'breakpts_canvas'};
 }
 
 #
@@ -2902,6 +3028,7 @@ sub refresh_stack_menu {
         $self->{stack_menu}
             ->command(-label => $str, -command => sub { $self->goto_sub_from_stack($f, $line); });
     }
+    $self->apply_menu_font($self->{stack_menu});
 }
 
 sub get_state {
@@ -3638,7 +3765,7 @@ Sets the fixed font used for code, expressions, and filenames. Defaults to C<Cou
 
 =item PTKDB_GUI_FONT
 
-Sets the non-fixed font used for GUI elements such as buttons, menus, and labels. Defaults to the normal Tk widget font.
+Sets the non-fixed font used for GUI elements such as buttons, menus, and labels. Defaults to C<Helvetica 10>.
 
 =item PTKDB_CODE_SIDE
 
