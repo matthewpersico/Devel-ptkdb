@@ -1,0 +1,24 @@
+# -*- sh -*-
+# shellcheck shell=bash
+
+# to-and-fro - get the files back and forth between the repo and the ChatGPT workspace.
+
+set -eo pipefail
+
+declare git_repo='/home/matthew/gits/github/matthewpersico/Devel-ptkdb/wt/reorg'
+declare gpt_work='/mnt/c/Users/matth/Documents/Codex/2026-06-27/is/work/'
+
+if [[ $1 =~ 'to-chat' ]]; then
+   src=$git_repo
+   dst=$gpt_work
+elif [[ $1 =~ 'from-chat' ]]; then
+   dst=$git_repo
+   src=$gpt_work
+else
+    cmd-echo --ec "Usage: $0 [to|from]chat"
+    exit 1
+fi
+
+$REALGIT -C "$src" ls-files |
+rsync -a --itemize-changes --files-from=- "$src/" "$dst/" |
+grep '>'
