@@ -20,5 +20,8 @@ else
 fi
 
 $REALGIT -C "$git_repo" ls-files |
-    rsync -a --itemize-changes --files-from=- "$src/" "$dst/" |
+    rsync -rltD \
+          --no-perms --no-owner --no-group \
+          -itemize-changes \
+          --files-from=- "$src/" "$dst/" |
     grep '>'
