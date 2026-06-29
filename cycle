@@ -45,11 +45,12 @@ done
 
 
 if ((opt_tidy)); then
-    /home/matthew/personal/bin/perltidy-bulk --update --all || exit
+    /home/matthew/personal/bin/perltidy-bulk --update --all --summary-only || exit
 fi
 
 if (( ! opt_run_only )); then
     { perl Makefile.PL \
+        && make | grep -F -v '(unchanged)' \
         && make test; } || exit
 fi
 

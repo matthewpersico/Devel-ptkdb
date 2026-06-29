@@ -18,6 +18,25 @@ for my $file (
     $PM_FILES{$file} = '$(INST_LIB)/' . $relative_path;
 }
 
+my %PREREQ_PM = (
+    'Devel::PL_origargv' => 0,
+    'Ref::Util'          => 0,
+    'Tk'                 => 0,
+    'Tk::Adjuster'       => 0,
+    'Tk::Balloon'        => 0,
+    'Tk::Derived'        => 0,
+    'Tk::Dialog'         => 0,
+    'Tk::HList'          => 0,
+    'Tk::NoteBook'       => 0,
+    'Tk::ROText'         => 0,
+    'Tk::Table'          => 0,
+    'Tk::TextUndo'       => 0,
+    (   $^O =~ /MSWin32|msys|cygwin/i
+        ? ('Win32::TieRegistry' => '0')
+        : ()
+    )
+);
+
 my %WriteMakefileArgs = (
     NAME               => 'Devel::ptkdb',
     AUTHOR             => ['Matthew O. Persico <persicom.cpan@gmail.com>'],
@@ -35,20 +54,7 @@ my %WriteMakefileArgs = (
         'Test::Perl::Critic' => 0,
         'version'            => 0,
     },
-    PREREQ_PM => {
-        'Devel::PL_origargv' => 0,
-        'Ref::Util'          => 0,
-        'Tk'                 => 0,
-        'Tk::Adjuster'       => 0,
-        'Tk::Balloon'        => 0,
-        'Tk::Derived'        => 0,
-        'Tk::Dialog'         => 0,
-        'Tk::HList'          => 0,
-        'Tk::NoteBook'       => 0,
-        'Tk::ROText'         => 0,
-        'Tk::Table'          => 0,
-        'Tk::TextUndo'       => 0,
-    },
+    PREREQ_PM  => \%PREREQ_PM,
     dist       => { COMPRESS => 'gzip -9f', SUFFIX => 'gz', },
     clean      => { FILES    => 'Module-Starter-PBP-*' },
     META_MERGE => {

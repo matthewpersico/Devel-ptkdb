@@ -29,6 +29,7 @@ use Tk::Tree;
 
 # ===========================================================================
 # Project modules
+use Devel::ptkdb::Browser;
 use Devel::ptkdb::Cmd;
 use Devel::ptkdb::InitAPI;
 use Devel::ptkdb::Playlist;
@@ -50,8 +51,6 @@ my $_ptkdb_obj;                        # Storage for the ptkdb object for
                                        # Devel::ptkdb::obj().
 our $_ptkdb_obj_is_being_built = 0;    # Needs to be 'our' so we can 'local'
                                        # it.
-my $isWin32 = $^O eq 'MSWin32';
-
 my $dumpFunc = (
     Data::Dumper->can('Dumpxs')
     ? 'Dumpxs'
@@ -226,6 +225,17 @@ sub obj {
 
     return $_ptkdb_obj;
 }
+
+{
+    my $isWin32 = ($^O =~ /MSWin32|msys|cygwin/i) || 0;
+
+    sub is_mswindows {
+        return $isWin32;
+    }
+}
+
+# ===========================================================================
+# Object instance methods
 
 sub key_event {
     my ($self, $name) = @_;
@@ -626,7 +636,7 @@ sub set_window_icon {
 
     my @candidates;
     push @candidates, qw(ptkdb.ico)
-        if $^O eq 'MSWin32';
+        if is_mswindows();
 
     for my $ext (qw (png gif xpm)) {
         push @candidates, 'ptkdb.' . $ext;
@@ -686,34 +696,15 @@ sub BEGIN {
     $ENV{'DISPLAY'} = $ENV{'PTKDB_DISPLAY'} if exists $ENV{'PTKDB_DISPLAY'};
 }
 
-sub DoBugReport {
-    my $self       = shift;
-    my ($str)      = 'sourceforge.net/tracker/?atid=437609&group_id=43854&func=browse';
-    my (@browsers) = qw/netscape mozilla/;
-    my ($fh, $pid, $sh);
-
-    if ($isWin32) {
-        $sh       = '';
-        @browsers = '"' . $ENV{'PROGRAMFILES'} . '\\Internet Explorer\\IEXPLORE.EXE' . '"';
-
+sub do_bug_report {
+    my $self    = shift;
+    my $url     = 'https://github.com/matthewpersico/Devel-ptkdb/issues/new';
+    my $browser = Devel::ptkdb::Browser->new();
+    if (not $browser->cmd()) {
+        $self->do_alert("No browser found. Please go to $url and open an issue.");
     } else {
-        $sh  = 'sh';
-        $str = "\'http://" . $str . "\'";
+        $browser->open_url($url);
     }
-
-    $fh = new FileHandle();
-
-    for (@browsers) {
-        $pid = open($fh, "$sh $_ $str 2&> /dev/null |");    ## no critic (InputOutput::ProhibitTwoArgOpen)
-        sleep(2);
-        waitpid $pid, 0;
-        return if ($? == 0);
-    }
-
-    print "#\n";
-    print "# Please submit a bug report through the following URL:\n";
-    print '#    http://sourceforge.net/tracker/?atid=437609&group_id=43854&func=browse', "\n";
-    print "#\n";
 }
 
 #
@@ -965,7 +956,7 @@ sub setup_menu_bar_item_file {
 
     my $items = [
         ['command' => 'About...',      -command => sub { $self->DoAbout(); }],
-        ['command' => 'Bug Report...', -command => sub { self->DoBugReport(); }],
+        ['command' => 'Bug Report...', -command => sub { $self->do_bug_report(); }],
         "-",
 
         [   'command'    => 'Open',
@@ -2678,7 +2669,7 @@ sub set_file {
             $lineStr = sprintf($self->{'linenumber_format'}, $i++) . $code_line;
 
             # removes the CR from win32 instances
-            substr $lineStr, -2, 1, '' if $isWin32;
+            substr $lineStr, -2, 1, '' if is_mswindows();
 
             # append a \n if there isn't one already
             $lineStr .= "\n" unless $code_line =~ /\n$/o;
