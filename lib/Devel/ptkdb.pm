@@ -239,18 +239,18 @@ sub obj {
 
 sub key_event {
     my ($self, $name) = @_;
-    return $KEY_BINDINGS{$name}->{event};
+    return $KEY_BINDINGS{$name}->{'event'};
 }
 
 sub key_accelerator {
     my ($self, $name) = @_;
-    return $KEY_BINDINGS{$name}->{accelerator};
+    return $KEY_BINDINGS{$name}->{'accelerator'};
 }
 
 sub bind_key {
     my ($self, $name, $callback) = @_;
 
-    $self->{main_window}->bind($self->key_event($name), $callback);
+    $self->{'main_window'}->bind($self->key_event($name), $callback);
     return;
 }
 
@@ -350,21 +350,21 @@ sub code_item_style_args {
     return unless $widget && %{$settings};
 
     my $key = "$widget:$item_type";
-    if (!exists $self->{code_item_styles}->{$key}) {
-        $self->{code_item_styles}->{$key} = eval { $widget->ItemStyle($item_type, %{$settings}) };
-        if (!$self->{code_item_styles}->{$key} && $widget->can('children')) {
+    if (!exists $self->{'code_item_styles'}->{$key}) {
+        $self->{'code_item_styles'}->{$key} = eval { $widget->ItemStyle($item_type, %{$settings}) };
+        if (!$self->{'code_item_styles'}->{$key} && $widget->can('children')) {
             CHILD:
             for my $child ($widget->children) {
                 my @child_style = $self->code_item_style_args($child, $item_type);
                 if (@child_style) {
-                    $self->{code_item_styles}->{$key} = $child_style[1];
+                    $self->{'code_item_styles'}->{$key} = $child_style[1];
                     last CHILD;
                 }
             }
         }
     }
 
-    my $style = $self->{code_item_styles}->{$key};
+    my $style = $self->{'code_item_styles'}->{$key};
     return $style ? (-style => $style) : ();
 }
 
@@ -377,35 +377,35 @@ sub new {
 
     bless $self, $type;
     # The whole command - perl exec, perl args, program, program args
-    $self->{restart_cmd} = [Devel::PL_origargv->get()];
+    $self->{'restart_cmd'} = [Devel::PL_origargv->get()];
 
     # ENV - We will want to restore the original environment when we
     # restart, especially since the environment contains PATH; if
     # perl was invoked as 'perl', we will need to have the same PATH
     # in place to get the same perl we started with.
-    $self->{restart_ENV} = \%ENV;
+    $self->{'restart_ENV'} = \%ENV;
 
     # Location - we need to go back to where we started, or else you
     # may not find $0.
-    $self->{restart_dir} = cwd();
+    $self->{'restart_dir'} = cwd();
 
     # Handles .ptkdb file saves and loads.
-    $self->{state_manager} = Devel::ptkdb::State->new(ptkdb_obj => $self);
-    $self->{script_name}   = $0;
+    $self->{'state_manager'} = Devel::ptkdb::State->new(ptkdb_obj => $self);
+    $self->{'script_name'}   = $0;
     # copy args, don't point at them
-    $self->{script_args} = [@ARGV];
+    $self->{'script_args'} = [@ARGV];
 
     # List o' Widgets to disable when leaving the debugger
-    $self->{DisableOnLeave} = [];
+    $self->{'DisableOnLeave'} = [];
 
-    $self->{current_file} = q();
+    $self->{'current_file'} = q();
     # initial value indicating we haven't set our line/tag
-    $self->{current_line} = -1;
+    $self->{'current_line'} = -1;
     # when we enter how far from the top of the text are we positioned down
-    $self->{window_pos_offset} = 10;
-    $self->{search_start}      = "0.0";
-    $self->{fwdOrBack}         = 1;
-    $self->{BookMarksPath}
+    $self->{'window_pos_offset'} = 10;
+    $self->{'search_start'}      = "0.0";
+    $self->{'fwdOrBack'}         = 1;
+    $self->{'BookMarksPath'}
         = $ENV{'PTKDB_BOOKMARKS_PATH'} || "$ENV{'HOME'}/.ptkdb_bookmarks" || '.ptkdb_bookmarks';
 
     # list of expressions to eval in our window fields: {'expr'} The expr
@@ -456,7 +456,7 @@ sub new {
     # decompose it all the way down. However, if you have a situation where an
     # element is a ref back to the array or a root of the array you could hang
     # the debugger by making it recursively evaluate an expression
-    $self->{expr_depth}       = -1;
+    $self->{'expr_depth'}     = -1;
     $self->{'add_expr_depth'} = 1;    # how much further to expand an expression when clicked
 
     $self->{'linenumber_format'} = $ENV{'PTKDB_LINENUMBER_FORMAT'} || "%05d ";
@@ -489,11 +489,11 @@ sub do_alert {
         : $args{msg}
     );
 
-    my $previous_focus = $self->{main_window}->focusCurrent();
-    my $top            = $self->{main_window}->Toplevel(-title => $args{title});
+    my $previous_focus = $self->{'main_window'}->focusCurrent();
+    my $top            = $self->{'main_window'}->Toplevel(-title => $args{title});
 
-    $top->iconimage($self->{window_icon_image}) if $self->{window_icon_image};
-    $top->transient($self->{main_window});
+    $top->iconimage($self->{'window_icon_image'}) if $self->{'window_icon_image'};
+    $top->transient($self->{'main_window'});
 
     $top->Label(
         -text       => $message,
@@ -552,9 +552,9 @@ sub error_dialog {
             )
         : $args{msg}
     );
-    my $previous_focus = $self->{main_window}->focusCurrent();
+    my $previous_focus = $self->{'main_window'}->focusCurrent();
 
-    $self->{main_window}->messageBox(
+    $self->{'main_window'}->messageBox(
         %args,
         -type => 'OK',
         -icon => 'error',
@@ -612,12 +612,12 @@ sub code_source_label {
 
 sub restore_state_file {
     my ($self, @args) = @_;
-    return $self->{state_manager}->restore_state_file(@args);
+    return $self->{'state_manager'}->restore_state_file(@args);
 }
 
 sub save_state_file {
     my ($self, @args) = @_;
-    return $self->{state_manager}->save_state_file(@args);
+    return $self->{'state_manager'}->save_state_file(@args);
 }
 
 sub icon_file {
@@ -632,7 +632,7 @@ sub icon_file {
 sub set_window_icon {
     my ($self) = @_;
 
-    my $mw = $self->{main_window};
+    my $mw = $self->{'main_window'};
 
     my @candidates;
     push @candidates, qw(ptkdb.ico)
@@ -663,7 +663,7 @@ sub set_window_icon {
         $mw->iconimage($img);
         $mw->Icon(-image => $img) if $mw->can('Icon');
 
-        $self->{window_icon_image} = $img;    # keep alive
+        $self->{'window_icon_image'} = $img;    # keep alive
 
         return 1;
     }
@@ -729,15 +729,15 @@ sub do_user_init_files {
     );
 
     for my $init_file (@init_files) {
-        if (!-e $init_file->{filename}) {
-            console_say("No $init_file->{type} init file $init_file->{filename} found.");
+        if (!-e $init_file->{'filename'}) {
+            console_say("No $init_file->{'type'} init file $init_file->{'filename'} found.");
         } else {
-            eval { do "$init_file->{filename}"; };
+            eval { do "$init_file->{'filename'}"; };
             if ($@) {
                 console_say(
-                    ucfirst($init_file->{type}) . " $init_file->{filename} failed to load: $@");
+                    ucfirst($init_file->{'type'}) . " $init_file->{'filename'} failed to load: $@");
             } else {
-                console_say(ucfirst($init_file->{type}) . " $init_file->{filename} loaded.");
+                console_say(ucfirst($init_file->{'type'}) . " $init_file->{'filename'} loaded.");
             }
         }
     }
@@ -750,8 +750,8 @@ sub setup_main_window {
 
     # Main Window
 
-    $self->{main_window} = MainWindow->new();
-    $self->{main_window}->geometry($ENV{'PTKDB_GEOMETRY'} || "800x600");
+    $self->{'main_window'} = MainWindow->new();
+    $self->{'main_window'}->geometry($ENV{'PTKDB_GEOMETRY'} || "800x600");
     $self->set_window_icon();
 
     $self->setup_options();    # must be done after MainWindow and before other frames are setup
@@ -761,7 +761,7 @@ sub setup_main_window {
     #
     # Bind our 'quit' routine to a close command from the window manager (Alt-F4)
     #
-    $self->{main_window}->protocol('WM_DELETE_WINDOW', sub { $self->DoQuit(); });
+    $self->{'main_window'}->protocol('WM_DELETE_WINDOW', sub { $self->DoQuit(); });
 
     # Shared between the GUI and the command line
     $self->setup_shared_callbacks();
@@ -779,7 +779,7 @@ sub setup_main_window {
 # Shared between the GUI and the command line
 sub setup_shared_callbacks {
     my ($self) = @_;
-    $self->{shared_callbacks} = {
+    $self->{'shared_callbacks'} = {
         runSub => sub { $DB::step_over_depth = -1; $self->{'event'} = 'run' },
 
         runToSub => sub {
@@ -812,7 +812,7 @@ sub setup_shared_callbacks {
 sub focus_debugger_command_widget {
     my ($self) = @_;
 
-    my $entry_widget = $self->{debugger_command_widget}
+    my $entry_widget = $self->{'debugger_command_widget'}
         or return;
 
     $entry_widget->afterIdle(
@@ -830,10 +830,10 @@ sub focus_debugger_command_widget {
 sub DoQuit {
     my ($self) = @_;
 
-    $self->save_bookmarks($self->{BookMarksPath})
+    $self->save_bookmarks($self->{'BookMarksPath'})
         if $self->{'bookmarks_changed'};
-    $self->{main_window}->destroy if $self->{main_window};
-    $self->{main_window} = undef  if defined $self->{main_window};
+    $self->{'main_window'}->destroy if $self->{'main_window'};
+    $self->{'main_window'} = undef  if defined $self->{'main_window'};
 
     exit;
 }
@@ -883,7 +883,7 @@ sub DoOpen {
     # Create a list box with all of our files
     # to select from
     #
-    $topLevel = $self->{main_window}->Toplevel(-title => "File Select", -overanchor => 'cursor');
+    $topLevel = $self->{'main_window'}->Toplevel(-title => "File Select", -overanchor => 'cursor');
 
     $listBox = $topLevel->Scrolled(
         'Listbox', %{ $self->{'scrollbar_cfg'} },
@@ -938,8 +938,8 @@ sub do_tabs {
 
 sub close_ptkdb_window_and_run {
     my ($self) = @_;
-    $self->{'event'}      = 'run';
-    $self->{current_file} = q();     # force a file reset
+    $self->{'event'}        = 'run';
+    $self->{'current_file'} = q();     # force a file reset
     $self->{'main_window'}->destroy;
     $self->{'main_window'} = undef;
 }
@@ -967,12 +967,12 @@ sub setup_menu_bar_item_file {
 
         [   'command'  => 'Save Config...',
             -underline => 0,
-            -command   => sub { $self->{state_manager}->save_state_callback() },
+            -command   => sub { $self->{'state_manager'}->save_state_callback() },
         ],
 
         [   'command'  => 'Restore Config...',
             -underline => 0,
-            -command   => sub { $self->{state_manager}->restore_state_callback() },
+            -command   => sub { $self->{'state_manager'}->restore_state_callback() },
         ],
 
         [   'command'    => 'Goto Line...',
@@ -1011,27 +1011,27 @@ sub setup_menu_bar_item_control {
     my ($self) = @_;
 
     my $clearAllBkptsSub = sub {
-        $self->removeAllBreakpoints($self->{current_file});
+        $self->removeAllBreakpoints($self->{'current_file'});
         DB::clear_all_breakpoint_info();
     };
 
-    $self->bind_key('run',               $self->{shared_callbacks}->{runSub});
-    $self->bind_key('run_to_here',       $self->{shared_callbacks}->{runToSub});
+    $self->bind_key('run',               $self->{'shared_callbacks'}->{'runSub'});
+    $self->bind_key('run_to_here',       $self->{'shared_callbacks'}->{'runToSub'});
     $self->bind_key('toggle_breakpoint', sub { $self->SetBreakPoint; });
-    $self->bind_key('step_over',         $self->{shared_callbacks}->{stepOverSub});
-    $self->bind_key('step_in',           $self->{shared_callbacks}->{stepInSub});
-    $self->bind_key('step_out',          $self->{shared_callbacks}->{returnSub});
+    $self->bind_key('step_over',         $self->{'shared_callbacks'}->{'stepOverSub'});
+    $self->bind_key('step_in',           $self->{'shared_callbacks'}->{'stepInSub'});
+    $self->bind_key('step_out',          $self->{'shared_callbacks'}->{'returnSub'});
 
     my $items = [
         [   'command'    => 'Run',
             -accelerator => $self->key_accelerator('run'),
             -underline   => 0,
-            -command     => $self->{shared_callbacks}->{runSub}
+            -command     => $self->{'shared_callbacks'}->{'runSub'}
         ],
         [   'command'    => 'Run To Here',
             -accelerator => $self->key_accelerator('run_to_here'),
             -underline   => 5,
-            -command     => $self->{shared_callbacks}->{runToSub}
+            -command     => $self->{'shared_callbacks'}->{'runToSub'}
         ],
         '-',
         [   'command'    => 'Set Breakpoint',
@@ -1050,17 +1050,17 @@ sub setup_menu_bar_item_control {
         [   'command'    => 'Step Over',
             -accelerator => $self->key_accelerator('step_over'),
             -underline   => 0,
-            -command     => $self->{shared_callbacks}->{stepOverSub}
+            -command     => $self->{'shared_callbacks'}->{'stepOverSub'}
         ],
         [   'command'    => 'Step In',
             -accelerator => $self->key_accelerator('step_in'),
             -underline   => 5,
-            -command     => $self->{shared_callbacks}->{stepInSub}
+            -command     => $self->{'shared_callbacks'}->{'stepInSub'}
         ],
         [   'command'    => 'Return',
             -accelerator => $self->key_accelerator('step_out'),
             -underline   => 3,
-            -command     => $self->{shared_callbacks}->{returnSub}
+            -command     => $self->{'shared_callbacks'}->{'returnSub'}
         ],
         '-',
         [   'command'    => 'Restart...',
@@ -1070,7 +1070,7 @@ sub setup_menu_bar_item_control {
         ],
         '-',
         [   'checkbutton' => 'Stop On Warning',
-            -variable     => \$self->{stop_on_warning},
+            -variable     => \$self->{'stop_on_warning'},
             -command      => sub { $self->set_stop_on_warning(); }
         ]
 
@@ -1091,7 +1091,7 @@ sub setup_menu_bar_item_data {
     # result was an entry that disappeared off the screen, but not from our
     # data structures, so it reappeared after the next line was stepped. So, we
     # are mappping to trap and gracefully handle it.
-    $self->{main_window}->bind('<Delete>' => sub { $self->deleteExpr(); });
+    $self->{'main_window'}->bind('<Delete>' => sub { $self->deleteExpr(); });
     $self->bind_key('eval_window', sub { $self->setupEvalWindow(); });
 
     my $items = [
@@ -1142,12 +1142,12 @@ sub setup_menu_bar_item_bookmarks {
     #
     # Check to see if there is a bookmarks file
     #
-    return unless -e $self->{BookMarksPath} && -r $self->{BookMarksPath};
+    return unless -e $self->{'BookMarksPath'} && -r $self->{'BookMarksPath'};
 
     use vars qw($ptkdb_bookmarks);
     local ($ptkdb_bookmarks);    # ref to hash of bookmark entries
 
-    do $self->{BookMarksPath};   # eval the file
+    do $self->{'BookMarksPath'}; # eval the file
 
     $self->add_bookmark_items(@$ptkdb_bookmarks);
     $self->apply_menu_font($self->{'bookmarks_menu'});
@@ -1180,15 +1180,15 @@ sub setup_menu_bar_item_windows {
 
 sub setup_menu_bar {
     my ($self) = @_;
-    my $mw = $self->{main_window};
+    my $mw = $self->{'main_window'};
 
-    $self->{menu_bar}
+    $self->{'menu_bar'}
         = $mw->Frame(-relief => 'raised', -borderwidth => '1')->pack(-side => 'top', -fill => 'x');
 
-    my $mb = $self->{menu_bar};
+    my $mb = $self->{'menu_bar'};
 
     # File menu
-    $self->{file_menu_button} = $mb->Menubutton(
+    $self->{'file_menu_button'} = $mb->Menubutton(
         -text      => 'File',
         -underline => 0,
         -menuitems => $self->setup_menu_bar_item_file(),
@@ -1199,10 +1199,10 @@ sub setup_menu_bar {
         -anchor => 'nw',
         -padx   => 2
     );
-    $self->apply_menu_font($self->{file_menu_button});
+    $self->apply_menu_font($self->{'file_menu_button'});
 
     # Control menu
-    $self->{control_menu_button} = $mb->Menubutton(
+    $self->{'control_menu_button'} = $mb->Menubutton(
         -text      => 'Control',
         -underline => 0,
         -menuitems => $self->setup_menu_bar_item_control(),
@@ -1212,10 +1212,10 @@ sub setup_menu_bar {
         'left',
         -padx => 2
     );
-    $self->apply_menu_font($self->{control_menu_button});
+    $self->apply_menu_font($self->{'control_menu_button'});
 
     # Data Menu
-    $self->{data_menu_button} = $mb->Menubutton(
+    $self->{'data_menu_button'} = $mb->Menubutton(
         -text      => 'Data',
         -menuitems => $self->setup_menu_bar_item_data(),
         -underline => 0,
@@ -1224,10 +1224,10 @@ sub setup_menu_bar {
         -side => 'left',
         -padx => 2
     );
-    $self->apply_menu_font($self->{data_menu_button});
+    $self->apply_menu_font($self->{'data_menu_button'});
 
     # Stack menu - list of all current stack frames. Generated on the fly.
-    $self->{stack_menu} = $mb->Menubutton(
+    $self->{'stack_menu'} = $mb->Menubutton(
         -text      => 'Stack',
         -underline => 2,
         %{ $self->font_settings('gui') },
@@ -1235,10 +1235,10 @@ sub setup_menu_bar {
         -side => 'left',
         -padx => 2
     );
-    $self->apply_menu_font($self->{stack_menu});
+    $self->apply_menu_font($self->{'stack_menu'});
 
     # Bookmarks menu
-    $self->{bookmarks_menu} = $mb->Menubutton(
+    $self->{'bookmarks_menu'} = $mb->Menubutton(
         -text      => 'Bookmarks',
         -underline => 0,
         %{ $self->font_settings('gui') },
@@ -1247,7 +1247,7 @@ sub setup_menu_bar {
         -padx => 2
     );
     $self->setup_menu_bar_item_bookmarks();
-    $self->apply_menu_font($self->{bookmarks_menu});
+    $self->apply_menu_font($self->{'bookmarks_menu'});
 
     # Windows Menu
     my $windows_menu_button = $mb->Menubutton(
@@ -1263,59 +1263,59 @@ sub setup_menu_bar {
 
 sub setup_button_bar {
     my ($self) = @_;
-    my $mw = $self->{main_window};
+    my $mw = $self->{'main_window'};
 
     #
     # Bar for some popular controls
     #
-    $self->{button_bar} = $mw->Frame()->pack(-side => 'top', -fill => 'x');
+    $self->{'button_bar'} = $mw->Frame()->pack(-side => 'top', -fill => 'x');
 
-    $self->{stepin_button} = $self->{button_bar}->Button(
+    $self->{'stepin_button'} = $self->{'button_bar'}->Button(
         -text, => "Step In",
         %{ $self->font_settings('gui') },
-        -command => $self->{shared_callbacks}->{stepInSub}
+        -command => $self->{'shared_callbacks'}->{'stepInSub'}
     );
 
-    $self->{stepover_button} = $self->{button_bar}->Button(
+    $self->{'stepover_button'} = $self->{'button_bar'}->Button(
         -text, => "Step Over",
         %{ $self->font_settings('gui') },
-        -command => $self->{shared_callbacks}->{stepOverSub}
+        -command => $self->{'shared_callbacks'}->{'stepOverSub'}
     );
 
-    $self->{return_button} = $self->{button_bar}->Button(
+    $self->{'return_button'} = $self->{'button_bar'}->Button(
         -text, => "Return",
         %{ $self->font_settings('gui') },
-        -command => $self->{shared_callbacks}->{returnSub}
+        -command => $self->{'shared_callbacks'}->{'returnSub'}
     );
 
-    $self->{run_button} = $self->{button_bar}->Button(
+    $self->{'run_button'} = $self->{'button_bar'}->Button(
         -background => 'green',
         -text,      => "Run",
         %{ $self->font_settings('gui') },
-        -command => $self->{shared_callbacks}->{runSub}
+        -command => $self->{'shared_callbacks'}->{'runSub'}
     );
 
-    $self->{run_to_button} = $self->{button_bar}->Button(
+    $self->{'run_to_button'} = $self->{'button_bar'}->Button(
         -text, => "Run To",
         %{ $self->font_settings('gui') },
-        -command => $self->{shared_callbacks}->{runToSub}
+        -command => $self->{'shared_callbacks'}->{'runToSub'}
     );
 
-    $self->{breakpt_button} = $self->{button_bar}->Button(
+    $self->{'breakpt_button'} = $self->{'button_bar'}->Button(
         -text, => "Break",
         %{ $self->font_settings('gui') },
         -command => sub { $self->SetBreakPoint; }
     );
-    $self->{breakpt_button}->pack(-side => 'right');
-    $self->{run_to_button}->pack(-side => 'right');
-    $self->{run_button}->pack(-side => 'right');
-    $self->{return_button}->pack(-side => 'right');
-    $self->{stepover_button}->pack(-side => 'right');
-    $self->{stepin_button}->pack(-side => 'right');
+    $self->{'breakpt_button'}->pack(-side => 'right');
+    $self->{'run_to_button'}->pack(-side => 'right');
+    $self->{'run_button'}->pack(-side => 'right');
+    $self->{'return_button'}->pack(-side => 'right');
+    $self->{'stepover_button'}->pack(-side => 'right');
+    $self->{'stepin_button'}->pack(-side => 'right');
 
-    $self->setup_command_line($self->{button_bar});
+    $self->setup_command_line($self->{'button_bar'});
 
-    push @{ $self->{DisableOnLeave} },
+    push @{ $self->{'DisableOnLeave'} },
         @$self{
         'stepin_button', 'stepover_button', 'return_button', 'run_button',
         'run_to_button', 'breakpt_button'
@@ -1325,9 +1325,9 @@ sub setup_button_bar {
 sub setup_command_line {
     my ($self, $parent) = @_;
 
-    $parent //= $self->{main_window};
+    $parent //= $self->{'main_window'};
 
-    $self->{debugger_command_obj} = Devel::ptkdb::Cmd->new(ptkdb_obj => $self);
+    $self->{'debugger_command_obj'} = Devel::ptkdb::Cmd->new(ptkdb_obj => $self);
 
     my $frm = $parent->Frame()->pack(
         -side   => 'left',
@@ -1357,28 +1357,28 @@ sub setup_command_line {
         -expand => 1,
     );
 
-    $self->{debugger_command_obj}->attach_widget(
+    $self->{'debugger_command_obj'}->attach_widget(
         widget       => $entry_widget,
         ghost_widget => $ghost_widget,
     );
 
     my $run_command = sub {
-        my $command = $self->{debugger_command_obj}->command_text();
+        my $command = $self->{'debugger_command_obj'}->command_text();
 
         $entry_widget->delete(0, 'end');
 
-        $self->{debugger_command_obj}->execute($command);
+        $self->{'debugger_command_obj'}->execute($command);
 
         $self->focus_debugger_command_widget();
-        $self->{debugger_command_obj}->update_ghost();
+        $self->{'debugger_command_obj'}->update_ghost();
 
         return;
     };
 
     $entry_widget->bind('<Return>' => $run_command);
 
-    $self->{debugger_command_widget} = $entry_widget;
-    $self->{debugger_command_obj}->update_ghost();
+    $self->{'debugger_command_widget'} = $entry_widget;
+    $self->{'debugger_command_obj'}->update_ghost();
 
     return;
 }
@@ -1386,7 +1386,7 @@ sub setup_command_line {
 sub edit_bookmarks {
     my ($self) = @_;
 
-    my ($top) = $self->{main_window}->Toplevel(-title => "Edit Bookmarks");
+    my ($top) = $self->{'main_window'}->Toplevel(-title => "Edit Bookmarks");
 
     my $list
         = $top->Scrolled('Listbox', -selectmode => 'multiple', %{ $self->font_settings('code') })
@@ -1546,7 +1546,7 @@ sub expr_move {
 
     if ($action eq 'done_moving') {
         # Index by the path on screen...
-        my %expr_hash = map { $_->{expr}, $_ } @{ $self->{'expr_list'} };
+        my %expr_hash = map { $_->{'expr'}, $_ } @{ $self->{'expr_list'} };
 
         # ...so we can resort by the screen order...
         $self->{'expr_list'}
@@ -1709,13 +1709,13 @@ sub fill_subs_page {
 
     # Now that we have the branches, sort and add
     my @entries         = sub_list_sort(keys %tree);
-    my @code_item_style = $self->code_item_style_args($self->{sub_list}, 'imagetext');
+    my @code_item_style = $self->code_item_style_args($self->{'sub_list'}, 'imagetext');
     for (@entries) {
-        $self->{sub_list}->add($_, -text => $tree{$_}, @code_item_style);
+        $self->{'sub_list'}->add($_, -text => $tree{$_}, @code_item_style);
         # We want all the nodes closed to start
-        $self->{sub_list}->hide(entry => $_) if (split('@', $_) > 1);
+        $self->{'sub_list'}->hide(entry => $_) if (split('@', $_) > 1);
     }
-    $self->{sub_list}->autosetmode();
+    $self->{'sub_list'}->autosetmode();
 }
 
 sub setup_subs_page {
@@ -1901,8 +1901,8 @@ sub setup_frames {
     $frm->packPropagate(0);
     $code_scroller->packPropagate(0);
 
-    $self->{code_frame} = $frm;
-    $self->{code_side}  = $codeSide;
+    $self->{'code_frame'} = $frm;
+    $self->{'code_side'}  = $codeSide;
     $frm->packAdjust(-side => $codeSide, -fill => 'both', -expand => 1);
     $code_scroller->pack(-side => 'left', -fill => 'both', -expand => 1);
 
@@ -1953,7 +1953,7 @@ sub setup_frames {
     #
     # Playlist (HList with drag-n-drop) for data expressions
     #
-    $self->{data_list} = $self->{data_page}->Scrolled(
+    $self->{'data_list'} = $self->{'data_page'}->Scrolled(
         'Playlist',
         %{ $self->{'scrollbar_cfg'} },
         -separator => $self->{'pathSep'},
@@ -1961,8 +1961,8 @@ sub setup_frames {
         -command         => sub { $self->expr_expand(@_) },
         -callback_change => sub { $self->expr_move(@_); }
     );
-    $self->apply_font_settings($self->{data_list}, 'code');
-    $self->{data_list}->pack(-side => 'top', -fill => 'both', -expand => 1);    #
+    $self->apply_font_settings($self->{'data_list'}, 'code');
+    $self->{'data_list'}->pack(-side => 'top', -fill => 'both', -expand => 1);    #
 
     # tab for code call hierarchy. All modules are presented, including the
     # ones for THIS DEBUGGER. Which means you can debug the debugger while
@@ -2079,7 +2079,7 @@ sub configure_text {
 
 sub setup_options {
     my ($self) = @_;
-    my $mw = $self->{main_window};
+    my $mw = $self->{'main_window'};
 
     return unless $mw->can('appname');
 
@@ -2094,7 +2094,7 @@ sub setup_options {
 
 sub simpleGeo {
     my ($self) = @_;
-    my @main_geo = grep {m/[0-9]/} split(/([x+-])/, $self->{main_window}->geometry());
+    my @main_geo = grep {m/[0-9]/} split(/([x+-])/, $self->{'main_window'}->geometry());
     my $simple_loc
         = (   '+'
             . int($main_geo[2] + ($main_geo[0] * .05)) . '+'
@@ -2104,7 +2104,7 @@ sub simpleGeo {
 
 sub get_entry_text {
     my ($self) = @_;
-    return $self->{entry}->get();    # get the text in the entry
+    return $self->{'entry'}->get();    # get the text in the entry
 }
 
 #
@@ -2277,7 +2277,7 @@ sub reinsertBreakpoints {
         next unless defined $brkpt;
         $self->insertBreakpoint($fname, @$brkpt{qw(line value expr)})
             if ($brkpt->{'type'} eq 'user');
-        $self->insertTempBreakpoint($fname, $brkpt->{line}) if ($brkpt->{'type'} eq 'temp');
+        $self->insertTempBreakpoint($fname, $brkpt->{'line'}) if ($brkpt->{'type'} eq 'temp');
     }
 }
 
@@ -2287,8 +2287,8 @@ sub removeBreakpointTags {
 
     for my $brkpt (@brkpts) {
         $idx = $brkpt->{'line'};
-        $self->{text}->tagRemove(
-            ($brkpt->{value} ? 'breaksetLine' : 'breakdisabledLine'),
+        $self->{'text'}->tagRemove(
+            ($brkpt->{'value'} ? 'breaksetLine' : 'breakdisabledLine'),
             "$idx.0", "$idx.$self->{'linenumber_length'}"
         );
         $self->{'text'}->tagAdd("breakableLine", "$idx.0", "$idx.$self->{'linenumber_length'}");
@@ -2312,7 +2312,7 @@ sub removeBreakpoint {
         DB::clear_breakpoint_info($fname, $idx + $offset);
         $self->remove_brkpt_from_brkpt_page($fname, $idx);
         # if this isn't our current file there will be no controls
-        next unless $brkpt->{fname} eq $self->{'current_file'};
+        next unless $brkpt->{'fname'} eq $self->{'current_file'};
 
         # Delete the ext associated with the breakpoint expression (if any)
         $self->removeBreakpointTags($brkpt);
@@ -2367,12 +2367,12 @@ sub deleteExpr {
 
     # Our list of all expressions. If any are arrays or hashes, we
     # only have the top-level expression, not any sub-expressions.
-    my @exprList = @{ $self->{expr_list} };
+    my @exprList = @{ $self->{'expr_list'} };
 
     # Key search and delete is quicker than comparisons in multiple
     # loops over multiples arrays below.
     my $exprIdx  = 0;
-    my %exprHash = map { $_->{expr} => $exprIdx++ } @exprList;
+    my %exprHash = map { $_->{'expr'} => $exprIdx++ } @exprList;
 
     # We have to make sure that each selection is not part of a data
     # structure; if a particular key/value of a hash or a member of
@@ -2390,11 +2390,11 @@ sub deleteExpr {
         # to keep and, conveniently, their index values, useful for a
         # slicing operation.
         @exprList = @exprList[sort { $a <=> $b } values(%exprHash)];
-        $self->{expr_list} = \@exprList;
+        $self->{'expr_list'} = \@exprList;
 
         # Now update the widget.
         for (@verifiedList) {
-            $self->{data_list}->delete('entry', $_);
+            $self->{'data_list'}->delete('entry', $_);
         }
     }
 }
@@ -2584,20 +2584,20 @@ sub set_line {
 
     return if ($lineno <= 0);
 
-    if ($self->{current_line} > 0) {
+    if ($self->{'current_line'} > 0) {
         $text->tagRemove(
             'stoppt',
-            "$self->{current_line}.0 linestart",
-            "$self->{current_line}.0 lineend"
+            "$self->{'current_line'}.0 linestart",
+            "$self->{'current_line'}.0 lineend"
         );
     }
-    $self->{current_line} = $lineno - $self->{'line_offset'};
+    $self->{'current_line'} = $lineno - $self->{'line_offset'};
     $text->tagAdd(
         'stoppt',
-        "$self->{current_line}.0 linestart",
-        "$self->{current_line}.0 lineend"
+        "$self->{'current_line'}.0 linestart",
+        "$self->{'current_line'}.0 lineend"
     );
-    $self->{'text'}->see("$self->{current_line}.0 linestart");
+    $self->{'text'}->see("$self->{'current_line'}.0 linestart");
 }
 
 # Set the file that is in the code window.
@@ -2621,14 +2621,14 @@ sub set_file {
 
     $text = $self->{'text'};
 
-    if ($fname eq $self->{current_file}) {
+    if ($fname eq $self->{'current_file'}) {
         $self->set_line($line);
         return;
     }
 
     $title = $fname;      # removing the - messes up stashes on -e invocations
     $title =~ s/^\-//;    # Tk does not like leadiing '-'s
-    $self->{main_window}->configure('-title' => $title);
+    $self->{'main_window'}->configure('-title' => $title);
 
     # Erase any existing text
     $text->delete('0.0', 'end');
@@ -2693,7 +2693,7 @@ sub set_file {
 
     # Reinsert breakpoints (if info provided)
     $self->set_line($line);
-    $self->{current_file} = $fname;
+    $self->{'current_file'} = $fname;
     return $self->reinsertBreakpoints($fname);
 }
 
@@ -2712,7 +2712,7 @@ sub get_lineno {
 sub page_code_window {
     my ($self) = @_;
 
-    my $text = $self->{text};
+    my $text = $self->{'text'};
 
     my $current_line = $self->get_lineno();
 
@@ -2774,9 +2774,9 @@ sub DoGoto {
 sub GotoLine {
     my ($self) = @_;
 
-    if ($self->{goto_window}) {
-        $self->{goto_window}->raise();
-        $self->{goto_text}->focus();
+    if ($self->{'goto_window'}) {
+        $self->{'goto_window'}->raise();
+        $self->{'goto_text'}->focus();
         return;
     }
 
@@ -2784,12 +2784,13 @@ sub GotoLine {
     # Construct a dialog that has an
     # entry field, okay and cancel buttons
     #
-    my $okaySub  = sub { $self->DoGoto($self->{'goto_text'}) };
-    my $topLevel = $self->{main_window}->Toplevel(-title => "Goto Line?", -overanchor => 'cursor');
-    $self->{goto_text} = $topLevel->Entry(%{ $self->font_settings('code') })
+    my $okaySub = sub { $self->DoGoto($self->{'goto_text'}) };
+    my $topLevel
+        = $self->{'main_window'}->Toplevel(-title => "Goto Line?", -overanchor => 'cursor');
+    $self->{'goto_text'} = $topLevel->Entry(%{ $self->font_settings('code') })
         ->pack(-side => 'top', -fill => 'both', -expand => 1);
-    $self->{goto_text}->bind('<Return>', $okaySub);    # make a CR do the same thing as pressing an okay
-    $self->{goto_text}->focus();
+    $self->{'goto_text'}->bind('<Return>', $okaySub);    # make a CR do the same thing as pressing an okay
+    $self->{'goto_text'}->focus();
 
     # Bind a double click on the mouse button to the same action
     # as pressing the Okay button
@@ -2804,9 +2805,9 @@ sub GotoLine {
     # button is pushed.
     #
     my $dismissSub = sub {
-        delete $self->{goto_text};
-        destroy { $self->{goto_window} };
-        delete $self->{goto_window};    # remove the entry from our hash so we won't
+        delete $self->{'goto_text'};
+        destroy { $self->{'goto_window'} };
+        delete $self->{'goto_window'};    # remove the entry from our hash so we won't
     };
 
     $topLevel->Button(
@@ -2817,7 +2818,7 @@ sub GotoLine {
 
     $topLevel->protocol('WM_DELETE_WINDOW', sub { destroy $topLevel; });
     $topLevel->geometry($self->simpleGeo());
-    $self->{goto_window} = $topLevel;
+    $self->{'goto_window'} = $topLevel;
 
 }
 
@@ -2831,8 +2832,8 @@ sub FindSearch {
 
     return if $txt eq q();
 
-    push @switches, "-forward"  if $self->{fwdOrBack} eq "forward";
-    push @switches, "-backward" if $self->{fwdOrBack} eq "backward";
+    push @switches, "-forward"  if $self->{'fwdOrBack'} eq "forward";
+    push @switches, "-backward" if $self->{'fwdOrBack'} eq "backward";
 
     if ($regExp) {
         push @switches, "-regexp";
@@ -2841,17 +2842,17 @@ sub FindSearch {
         push @switches, "-nocase";
     }
 
-    $result = $self->{'text'}->search(@switches, $txt, $self->{search_start});
+    $result = $self->{'text'}->search(@switches, $txt, $self->{'search_start'});
 
     # untag the previously found text
-    $self->{'text'}->tagRemove('search_tag', @{ $self->{search_tag} })
-        if defined $self->{search_tag};
+    $self->{'text'}->tagRemove('search_tag', @{ $self->{'search_tag'} })
+        if defined $self->{'search_tag'};
 
     if (!$result || $result eq q()) {
         # No text was found
         $btn->flash();
         $btn->bell();
-        delete $self->{search_tag};
+        delete $self->{'search_tag'};
         $self->{'search_start'} = '0.0';
     } else {    # text found
         $self->{'text'}->see($result);
@@ -2859,17 +2860,17 @@ sub FindSearch {
         $self->{'text'}->markSet('insert' => $result);
         my $len = length $txt;
 
-        if ($self->{fwdOrBack}) {
-            $self->{search_start} = "$result +$len chars";
-            $self->{search_tag}   = [$result, $self->{search_start}];
+        if ($self->{'fwdOrBack'}) {
+            $self->{'search_start'} = "$result +$len chars";
+            $self->{'search_tag'}   = [$result, $self->{'search_start'}];
         } else {
             # backwards search
-            $self->{search_start} = "$result -$len chars";
-            $self->{search_tag}   = [$result, "$result +$len chars"];
+            $self->{'search_start'} = "$result -$len chars";
+            $self->{'search_tag'}   = [$result, "$result +$len chars"];
         }
 
         # tag the newly found text
-        $self->{'text'}->tagAdd('search_tag', @{ $self->{search_tag} });
+        $self->{'text'}->tagAdd('search_tag', @{ $self->{'search_tag'} });
     }
 
     $entry->selectionRange(0, 'end') if $entry->can('selectionRange');
@@ -2885,40 +2886,40 @@ sub FindText {
 
     # If we already have the Find Text Window open don't bother opening
     # another, bring the existing one to the front.
-    if ($self->{find_window}) {
-        $self->{find_window}->raise();
-        $self->{find_text}->focus();
+    if ($self->{'find_window'}) {
+        $self->{'find_window'}->raise();
+        $self->{'find_text'}->focus();
         return;
     }
 
     ## WARNING: The KCG code had q( ).
-    $self->{search_start} = $self->{'text'}->index('insert') if ($self->{search_start} eq q());
+    $self->{'search_start'} = $self->{'text'}->index('insert') if ($self->{'search_start'} eq q());
 
     #
     # Subroutine called when the 'Dismiss' button
     # is pushed.
     #
     my $dismissSub = sub {
-        $self->{'text'}->tagRemove('search_tag', @{ $self->{search_tag} })
-            if defined $self->{search_tag};
-        $self->{search_start} = q();
-        destroy { $self->{find_window} };
-        delete $self->{search_tag};
-        delete $self->{find_window};
+        $self->{'text'}->tagRemove('search_tag', @{ $self->{'search_tag'} })
+            if defined $self->{'search_tag'};
+        $self->{'search_start'} = q();
+        destroy { $self->{'find_window'} };
+        delete $self->{'search_tag'};
+        delete $self->{'find_window'};
     };
 
     # Construct a dialog that has an entry field, forward, backward, regex
     # option, okay and cancel buttons
-    $top = $self->{main_window}->Toplevel(-title => "Find Text?");
-    $self->{find_text} = $top->Entry(%{ $self->font_settings('code') })
+    $top = $self->{'main_window'}->Toplevel(-title => "Find Text?");
+    $self->{'find_text'} = $top->Entry(%{ $self->font_settings('code') })
         ->pack(-side => 'top', -fill => 'both', -expand => 1);
     $frm = $top->Frame()->pack(-side => 'top', -fill => 'both', -expand => 1);
 
-    $self->{fwdOrBack} = 'forward';
+    $self->{'fwdOrBack'} = 'forward';
     $rad1 = $frm->Radiobutton(
         -text     => "Forward",
         -value    => 1,
-        -variable => \$self->{fwdOrBack},
+        -variable => \$self->{'fwdOrBack'},
         %{ $self->font_settings('gui') },
     );
     $rad1->pack(-side => 'left', -fill => 'both', -expand => 1);
@@ -2926,7 +2927,7 @@ sub FindText {
     $rad2 = $frm->Radiobutton(
         -text     => "Backward",
         -value    => 0,
-        -variable => \$self->{fwdOrBack},
+        -variable => \$self->{'fwdOrBack'},
         %{ $self->font_settings('gui') },
     );
     $rad2->pack(-side => 'left', -fill => 'both', -expand => 1);
@@ -2944,11 +2945,11 @@ sub FindText {
     # as pressing the Okay button
     $okayBtn = $top->Button(
         -text    => "Okay",
-        -command => sub { $self->FindSearch($self->{find_text}, $okayBtn, $regExp); },
+        -command => sub { $self->FindSearch($self->{'find_text'}, $okayBtn, $regExp); },
         %{ $self->font_settings('gui') },
     )->pack(-side => 'left', -fill => 'both', -expand => 1);
-    $self->{find_text}
-        ->bind('<Return>', sub { $self->FindSearch($self->{find_text}, $okayBtn, $regExp); });
+    $self->{'find_text'}
+        ->bind('<Return>', sub { $self->FindSearch($self->{'find_text'}, $okayBtn, $regExp); });
 
     $top->Button(
         -text => "Dismiss",
@@ -2958,8 +2959,8 @@ sub FindText {
 
     $top->protocol('WM_DELETE_WINDOW', $dismissSub);
     $top->geometry($self->simpleGeo());
-    $self->{find_text}->focus();
-    $self->{find_window} = $top;
+    $self->{'find_text'}->focus();
+    $self->{'find_window'} = $top;
 }
 
 sub main_loop {
@@ -3013,16 +3014,16 @@ sub refresh_stack_menu {
             { 'name' => $subName, 'pck' => $package, 'filename' => $filename, 'line' => $line };
     }
 
-    $self->{stack_menu}->menu->delete(0, 'last');    # delete existing menu items
+    $self->{'stack_menu'}->menu->delete(0, 'last');    # delete existing menu items
 
     for ($i = 0; $subStack->[$i]; $i++) {
-        $str = defined $subStack->[$i + 1] ? "$subStack->[$i+1]->{name}" : "MAIN";
+        $str = defined $subStack->[$i + 1] ? "$subStack->[$i+1]->{'name'}" : "MAIN";
         # make copies of the values for use in 'sub'
-        my ($f, $line) = ($subStack->[$i]->{filename}, $subStack->[$i]->{line});
-        $self->{stack_menu}
+        my ($f, $line) = ($subStack->[$i]->{'filename'}, $subStack->[$i]->{'line'});
+        $self->{'stack_menu'}
             ->command(-label => $str, -command => sub { $self->goto_sub_from_stack($f, $line); });
     }
-    $self->apply_menu_font($self->{stack_menu});
+    $self->apply_menu_font($self->{'stack_menu'});
 }
 
 sub get_state {
@@ -3046,8 +3047,8 @@ sub updateEvalWindow {
 
     $leng = 0;
     for (@result) {
-        if ($self->{hexdump_evals}) {
-            $self->{eval_results}->insert('end', hexDump($_));
+        if ($self->{'hexdump_evals'}) {
+            $self->{'eval_results'}->insert('end', hexDump($_));
         } else {
             $str
                 = Data::Dumper->new([$_])
@@ -3056,7 +3057,7 @@ sub updateEvalWindow {
                 ->$dumpFunc();
         }
         $leng += length $str;
-        $self->{eval_results}->insert('end', $str);
+        $self->{'eval_results'}->insert('end', $str);
     }
 }
 
@@ -3097,11 +3098,11 @@ sub setupEvalWindow {
     my ($self) = @_;
     my ($top, $dismissSub);
     my $f;
-    $self->{eval_window}->focus(), return if exists $self->{eval_window};    # already running this window?
+    $self->{'eval_window'}->focus(), return if exists $self->{'eval_window'};    # already running this window?
 
-    $top                 = $self->{main_window}->Toplevel(-title => "Evaluate Expressions...");
-    $self->{eval_window} = $top;
-    $self->{eval_text}   = $top->Scrolled(
+    $top                   = $self->{'main_window'}->Toplevel(-title => "Evaluate Expressions...");
+    $self->{'eval_window'} = $top;
+    $self->{'eval_text'}   = $top->Scrolled(
         'TextUndo',
         %{ $self->{'scrollbar_cfg'} },
         %{ $self->font_settings('code') },
@@ -3110,13 +3111,13 @@ sub setupEvalWindow {
         -wrap  => "none",
     )->packAdjust(-side => 'top', -fill => 'both', -expand => 1);
 
-    $self->{eval_text}->insert('end', $self->{eval_saved_text})
-        if exists $self->{eval_saved_text} && defined $self->{eval_saved_text};
+    $self->{'eval_text'}->insert('end', $self->{'eval_saved_text'})
+        if exists $self->{'eval_saved_text'} && defined $self->{'eval_saved_text'};
 
     $top->Label(-text, "Results:", %{ $self->font_settings('gui') })
         ->pack(-side => 'top', -fill => 'both', -expand => 'n');
 
-    $self->{eval_results} = $top->Scrolled(
+    $self->{'eval_results'} = $top->Scrolled(
         'Text',
         %{ $self->{'scrollbar_cfg'} },
         width  => 50,
@@ -3128,35 +3129,35 @@ sub setupEvalWindow {
     my $btn = $top->Button(
         -text    => 'Eval...',
         -command => sub {
-            $self->{event} = 'reeval';
+            $self->{'event'} = 'reeval';
         },
         %{ $self->font_settings('gui') },
     )->pack(-side => 'left', -fill => 'x', -expand => 1);
 
     $dismissSub = sub {
-        $self->{eval_saved_text} = $self->{eval_text}->get('0.0', 'end');
-        $self->{eval_window}->destroy;
-        delete $self->{eval_window};
+        $self->{'eval_saved_text'} = $self->{'eval_text'}->get('0.0', 'end');
+        $self->{'eval_window'}->destroy;
+        delete $self->{'eval_window'};
     };
 
     $top->protocol('WM_DELETE_WINDOW', $dismissSub);
 
     $top->Button(
         -text    => 'Clear Eval',
-        -command => sub { $self->{eval_text}->delete('0.0', 'end') },
+        -command => sub { $self->{'eval_text'}->delete('0.0', 'end') },
         %{ $self->font_settings('gui') },
     )->pack(-side => 'left', -fill => 'x', -expand => 1);
 
     $top->Button(
         -text    => 'Clear Results',
-        -command => sub { $self->{eval_results}->delete('0.0', 'end') },
+        -command => sub { $self->{'eval_results'}->delete('0.0', 'end') },
         %{ $self->font_settings('gui') },
     )->pack(-side => 'left', -fill => 'x', -expand => 1);
 
     $top->Button(-text => 'Dismiss', -command => $dismissSub, %{ $self->font_settings('gui') })
         ->pack(-side => 'left', -fill => 'x', -expand => 1);
     $top->Checkbutton(
-        -text => 'Hex', -variable => \$self->{hexdump_evals},
+        -text => 'Hex', -variable => \$self->{'hexdump_evals'},
         %{ $self->font_settings('gui') }
     )->pack(-side => 'left');
     $top->geometry($self->simpleGeo());
@@ -3174,7 +3175,7 @@ sub filterBreakPts {
     #
     for (@$breakPtsListRef) {
         next unless defined $_;
-        my $line = $_->{line};
+        my $line = $_->{'line'};
         next if defined $lines->[$line] && $lines->[$line] ne '0';    # still breakable
         $_ = undef;
     }
@@ -3232,15 +3233,15 @@ sub SetBreakPoint {
     my $lineno = $self->get_lineno();
     my $expr   = $self->clear_entry_text();
 
-    if (!&DB::is_line_breakable($self->{current_file}, $lineno + $self->{'line_offset'})) {
-        $self->do_alert(msg => "line $lineno in $self->{current_file} is not breakable");
+    if (!&DB::is_line_breakable($self->{'current_file'}, $lineno + $self->{'line_offset'})) {
+        $self->do_alert(msg => "line $lineno in $self->{'current_file'} is not breakable");
         return 0;
     }
     if (!$isTemp) {
-        $self->insertBreakpoint($self->{current_file}, $lineno, 1, $expr);
+        $self->insertBreakpoint($self->{'current_file'}, $lineno, 1, $expr);
         return 1;
     } else {
-        $self->insertTempBreakpoint($self->{current_file}, $lineno);
+        $self->insertTempBreakpoint($self->{'current_file'}, $lineno);
         return 1;
     }
     return 0;
@@ -3249,7 +3250,7 @@ sub SetBreakPoint {
 sub UnsetBreakPoint {
     my ($self) = @_;
     my $lineno = $self->get_lineno();
-    $self->removeBreakpoint($self->{current_file}, $lineno);
+    $self->removeBreakpoint($self->{'current_file'}, $lineno);
 }
 
 sub balloon_post {
@@ -3318,7 +3319,7 @@ sub retrieve_text_expr {
 
     $col -= $offset;
 
-    $data = DB::get_code_line($self->{current_file}, $idx);
+    $data = DB::get_code_line($self->{'current_file'}, $idx);
     return if (!defined $data || $data eq '0');    # no executable text, no real variable(?)
 
     # if we're sitting over white space, leave
@@ -3367,13 +3368,13 @@ sub EnterActions {
     # Don't know why it's commented out.
     #  $self->{'main_window'}->Unbusy() ;
 
-    if (my $pending = delete $self->{pending_code_pane_size}) {
+    if (my $pending = delete $self->{'pending_code_pane_size'}) {
         # Force the window to map and let the Adjuster's Mapped callback
         # (which calls slave_expand_off) fully settle before we apply the
         # saved pane size. Without update() here, slave_expand_off runs
         # later and overwrites our configure with the default width.
-        $self->{main_window}->update();
-        $self->{code_frame}->configure($pending->{dim} => $pending->{size});
+        $self->{'main_window'}->update();
+        $self->{'code_frame'}->configure($pending->{'dim'} => $pending->{'size'});
     }
 }
 
@@ -3397,44 +3398,44 @@ sub DoRestart {
         $fdir,
         "ptkdb_restart_state.$$." . strftime('%Y-%m-%dT%H-%M-%S', localtime)
     );
-    $self->{state_manager}->save_state_file($fname);
+    $self->{'state_manager'}->save_state_file($fname);
 
     # go back to where we were when we started
-    chdir($self->{restart_dir});
+    chdir($self->{'restart_dir'});
 
     # original env. we do this assignment after the cdw in case the
     # cwd modifies %ENV.
-    %ENV = %{ $self->{restart_ENV} };
+    %ENV = %{ $self->{'restart_ENV'} };
 
     # This setting will be seen by the new process after exec'ing.
     $ENV{DB_RESTART_STATE_FILE} = $fname;
 
     # Go..
-    exec @{ $self->{restart_cmd} };
+    exec @{ $self->{'restart_cmd'} };
 }
 
 # Enables/Disables the feature where we stop if we've encountered a perl
 # warning such as: "Use of uninitialized value at undef_warn.pl line N"
 sub stop_on_warning_cb {
     my $self = shift;
-    $self->{warn_sig_save}->() if $self->{warn_sig_save};    # call any previously registered warning
+    $self->{'warn_sig_save'}->() if $self->{'warn_sig_save'};    # call any previously registered warning
     $self->do_alert(msg => @_);
-    $DB::single = 1;                                         # forces debugger to stop next time
+    $DB::single = 1;                                             # forces debugger to stop next time
 }
 
 sub set_stop_on_warning {
     my $self = shift;
-    if ($self->{stop_on_warning}) {
+    if ($self->{'stop_on_warning'}) {
 
-        return if $self->{warn_sig_save} == \&$self->stop_on_warning_cb;    # prevents recursion
+        return if $self->{'warn_sig_save'} == \&$self->stop_on_warning_cb;    # prevents recursion
 
-        $self->{warn_sig_save} = $SIG{'__WARN__'} if $SIG{'__WARN__'};
+        $self->{'warn_sig_save'} = $SIG{'__WARN__'} if $SIG{'__WARN__'};
         $SIG{'__WARN__'} = \&$self->stop_on_warning_cb;
     } else {
         #
         # Restore any previous warning signal
         #
-        $SIG{'__WARN__'} = $self->{warn_sig_save};
+        $SIG{'__WARN__'} = $self->{'warn_sig_save'};
     }
 }
 

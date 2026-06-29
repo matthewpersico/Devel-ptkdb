@@ -51,10 +51,10 @@ sub new {
 sub attach_widget {
     my ($self, %args) = @_;
 
-    $self->{widget}       = $args{widget};
-    $self->{ghost_widget} = $args{ghost_widget};
+    $self->{'widget'}       = $args{widget};
+    $self->{'ghost_widget'} = $args{ghost_widget};
 
-    $self->{widget}->bind(
+    $self->{'widget'}->bind(
         '<KeyRelease>' => sub {
             $self->update_ghost();
         }
@@ -68,23 +68,23 @@ sub attach_widget {
 sub command_text {
     my ($self) = @_;
 
-    return $self->{widget}->get();
+    return $self->{'widget'}->get();
 }
 
 sub update_ghost {
     my ($self) = @_;
 
-    my $widget = $self->{widget}       or return;
-    my $ghost  = $self->{ghost_widget} or return;
+    my $widget = $self->{'widget'}       or return;
+    my $ghost  = $self->{'ghost_widget'} or return;
 
-    my $last = $self->{ptkdb_obj}->{command_line_last} // q{};
+    my $last = $self->{'ptkdb_obj'}->{'command_line_last'} // q{};
 
     if (length $widget->get() || !length $last) {
         $ghost->configure(-text => q{});
     } else {
         $ghost->configure(
             -text       => $last,
-            -foreground => $self->{placeholder_foreground},
+            -foreground => $self->{'placeholder_foreground'},
         );
     }
 
@@ -97,17 +97,17 @@ sub execute {
     $command //= '';
     $command =~ s/^\s+|\s+$//g;
 
-    my $ptkdb_obj = $self->{ptkdb_obj};
+    my $ptkdb_obj = $self->{'ptkdb_obj'};
 
     my @last;
-    push @last, $ptkdb_obj->{command_line_last} if $ptkdb_obj->{command_line_last};
+    push @last, $ptkdb_obj->{'command_line_last'} if $ptkdb_obj->{'command_line_last'};
     push @last, $command;
     my $retval = '<no command>';
 
     # Try to keep these in most to least likely to be used order.
     if ($command eq '') {
-        if ($ptkdb_obj->{command_line_last}) {
-            $command = $ptkdb_obj->{command_line_last};
+        if ($ptkdb_obj->{'command_line_last'}) {
+            $command = $ptkdb_obj->{'command_line_last'};
         } else {
             $ptkdb_obj->do_alert(
                 title => 'Debugger Command Line Error',
@@ -118,15 +118,15 @@ sub execute {
     }
 
     if ($command eq 'n') {
-        $retval = $ptkdb_obj->{shared_callbacks}->{stepOverSub}->();
+        $retval = $ptkdb_obj->{'shared_callbacks'}->{'stepOverSub'}->();
     } elsif ($command eq 's') {
-        $retval = $ptkdb_obj->{shared_callbacks}->{stepInSub}->();
+        $retval = $ptkdb_obj->{'shared_callbacks'}->{'stepInSub'}->();
     } elsif ($command eq 'c') {
-        $retval = $ptkdb_obj->{shared_callbacks}->{runSub}->();
+        $retval = $ptkdb_obj->{'shared_callbacks'}->{'runSub'}->();
     } elsif ($command eq 'r') {
-        $retval = $ptkdb_obj->{shared_callbacks}->{returnSub}->();
+        $retval = $ptkdb_obj->{'shared_callbacks'}->{'returnSub'}->();
     } elsif ($command eq 'q') {
-        $retval = $ptkdb_obj->{shared_callbacks}->{quitSub}->();
+        $retval = $ptkdb_obj->{'shared_callbacks'}->{'quitSub'}->();
     } elsif ($command eq 'h') {
         $ptkdb_obj->do_alert(
             title => 'Debugger Command Line Help',
@@ -146,7 +146,7 @@ sub execute {
         );
         return;
     } else {
-        $ptkdb_obj->{command_line_last} = $command;
+        $ptkdb_obj->{'command_line_last'} = $command;
         return $retval;
     }
 }

@@ -110,10 +110,10 @@ sub Delete {
 
     if ($cw->{'callback_change'}) {
         my ($cmd, @arg);
-        if (ref($cw->{callback_change}) eq 'ARRAY') {
-            ($cmd, @arg) = @{ $cw->{callback_change} };
-        } elsif (ref($cw->{callback_change}) eq 'CODE') {
-            ($cmd, @arg) = ($cw->{callback_change});
+        if (ref($cw->{'callback_change'}) eq 'ARRAY') {
+            ($cmd, @arg) = @{ $cw->{'callback_change'} };
+        } elsif (ref($cw->{'callback_change'}) eq 'CODE') {
+            ($cmd, @arg) = ($cw->{'callback_change'});
         }
 
         if ($cmd) {
@@ -144,13 +144,13 @@ sub findClick {
 
 sub EndMovement {
     my ($cw, $args) = @_;
-    if ($cw->{moving}) {
-        delete($cw->{moving});
-        if ($cw->{callback_change}) {
+    if ($cw->{'moving'}) {
+        delete($cw->{'moving'});
+        if ($cw->{'callback_change'}) {
             my ($cmd, @arg);
-            if (ref($cw->{callback_change}) eq 'ARRAY') {
-                ($cmd, @arg) = @{ $cw->{callback_change} };
-            } elsif (ref($cw->{callback_change}) eq 'CODE') {
+            if (ref($cw->{'callback_change'}) eq 'ARRAY') {
+                ($cmd, @arg) = @{ $cw->{'callback_change'} };
+            } elsif (ref($cw->{'callback_change'}) eq 'CODE') {
                 ($cmd, @arg) = ($cw->{'callback_change'});
             }
             if ($cmd) {
@@ -164,26 +164,26 @@ sub MoveEntries {
     my ($cw, $args) = @_;
     my ($Ev, $yy, $dir, $ent);
 
-    return if ($cw->{readonly});
+    return if ($cw->{'readonly'});
 
     $Ev  = $cw->XEvent;
     $yy  = $Ev->y;
     $ent = $cw->evFindClick($Ev);
 
-    if (!$cw->{moving}) {
-        $cw->{moving}  = $yy;
-        $cw->{old_ent} = $ent;
+    if (!$cw->{'moving'}) {
+        $cw->{'moving'}  = $yy;
+        $cw->{'old_ent'} = $ent;
     } else {
-        if ($cw->{moving} > $yy && $cw->{moving} - 10 > $yy) {
+        if ($cw->{'moving'} > $yy && $cw->{'moving'} - 10 > $yy) {
             $dir = -1;
-        } elsif ($cw->{moving} < $yy && $cw->{moving} + 10 < $yy) {
+        } elsif ($cw->{'moving'} < $yy && $cw->{'moving'} + 10 < $yy) {
             $dir = 1;
         }
-        if ($ent && $cw->{old_ent} && $ent eq $cw->{old_ent}) {
+        if ($ent && $cw->{'old_ent'} && $ent eq $cw->{'old_ent'}) {
             $dir = 0;
         }
 
-        $cw->{old_ent} = $ent;
+        $cw->{'old_ent'} = $ent;
 
         if ($Ev->y + 10 >= $cw->height) {
             $dir = 1;
@@ -229,12 +229,12 @@ sub MoveEntries {
                     $cw->selectionSet($ii);
                     $cw->anchorSet($ii);
 
-                    if ($cw->{callback_change}) {
+                    if ($cw->{'callback_change'}) {
                         my ($cmd, @arg);
-                        if (ref($cw->{callback_change}) eq 'ARRAY') {
-                            ($cmd, @arg) = @{ $cw->{callback_change} };
-                        } elsif (ref($cw->{callback_change}) eq 'CODE') {
-                            ($cmd, @arg) = ($cw->{callback_change});
+                        if (ref($cw->{'callback_change'}) eq 'ARRAY') {
+                            ($cmd, @arg) = @{ $cw->{'callback_change'} };
+                        } elsif (ref($cw->{'callback_change'}) eq 'CODE') {
+                            ($cmd, @arg) = ($cw->{'callback_change'});
                         }
 
                         if ($cmd) {
@@ -244,7 +244,7 @@ sub MoveEntries {
                 }
 
                 if ($pos != 0 && $pos != $#ic) {
-                    $cw->{moving} = $Ev->y;
+                    $cw->{'moving'} = $Ev->y;
                 }
             }
 
@@ -329,18 +329,18 @@ sub add_entry {
 
 sub readonly {
     my ($cw, $val) = @_;
-    my $rv = $cw->{readonly};
+    my $rv = $cw->{'readonly'};
     if (defined($val)) {
-        $cw->{readonly} = $val;
+        $cw->{'readonly'} = $val;
     }
     $rv;
 }
 
 sub callback_change {
     my ($cw, $val) = @_;
-    my $rv = $cw->{callback_change};
+    my $rv = $cw->{'callback_change'};
     if (defined($val)) {
-        $cw->{callback_change} = $val;
+        $cw->{'callback_change'} = $val;
     }
     $rv;
 }

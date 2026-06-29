@@ -171,7 +171,7 @@ sub cmd {
     if (@_) {
         confess("Devel::ptkdb::Browser::cmd() is a read only method");
     }
-    return $self->{browser};
+    return $self->{'browser'};
 }
 
 sub open_url {

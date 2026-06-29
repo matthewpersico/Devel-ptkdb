@@ -224,11 +224,11 @@ sub fix_breakpoints {
         # We compare code lines sans whitespace to help match in the face of
         # perl tidying.
         my $code_text = '';
-        if (defined $args{lines}->[$brkpt->{line}]) {
-            $code_text = $args{lines}->[$brkpt->{line}];
+        if (defined $args{lines}->[$brkpt->{'line'}]) {
+            $code_text = $args{lines}->[$brkpt->{'line'}];
             $code_text =~ s/\s+//g;
         }
-        my $brkpt_text = $brkpt->{text} // q{};
+        my $brkpt_text = $brkpt->{'text'} // q{};
         $brkpt_text =~ s/\s+//g;
         if ($brkpt_text eq $code_text) {
             $found = 1;
@@ -239,9 +239,9 @@ sub fix_breakpoints {
         my $pivot;
         # Look for the same line nearby
         if (not $found) {
-            $startLine = $brkpt->{line} - $PD{brkpt_search_line_count};
+            $startLine = $brkpt->{'line'} - $PD{brkpt_search_line_count};
             $startLine = 0 if ($startLine < 0);
-            $endLine   = $brkpt->{line} + $PD{brkpt_search_line_count};
+            $endLine   = $brkpt->{'line'} + $PD{brkpt_search_line_count};
             $endLine   = $nLines - 1 if $endLine > $nLines;
             $pivot     = int(($endLine - $startLine) / 2);
 
@@ -253,11 +253,11 @@ sub fix_breakpoints {
                 next unless $brkpt_text eq $code_text;
                 push @brkpt_fixed_msg,
                     (
-                    "Breakpoint $args{fname} (line $brkpt->{line}) was moved",
+                    "Breakpoint $args{fname} (line $brkpt->{'line'}) was moved",
                     " to line $_ because the statement moved.",
                     q()
                     );
-                $brkpt->{line} = $_;
+                $brkpt->{'line'} = $_;
                 push @retList, $brkpt;
                 $found = 1;
                 last NEARBY_SEARCH;
@@ -269,19 +269,19 @@ sub fix_breakpoints {
             PRIOR_POSITION: for ((reverse $startLine .. $pivot - 1)) {
                 my $brkpt_line = $_ + $args{offset};
                 if (DB::is_line_breakable($args{fname}, $brkpt_line)) {
-                    my ($from, $to) = ($brkpt->{text}, $args{lines}->[$brkpt_line]);
+                    my ($from, $to) = ($brkpt->{'text'}, $args{lines}->[$brkpt_line]);
                     chomp $from;
                     chomp $to;
                     push @brkpt_fixed_msg,
                         (
-                        "Breakpoint $args{fname} (line $brkpt->{line}) was moved",
+                        "Breakpoint $args{fname} (line $brkpt->{'line'}) was moved",
                         " from [$from]",
                         " to [$to] (line $_)",
                         " because the original statement cannot be found.",
                         q()
                         );
-                    $brkpt->{line} = $_;
-                    $brkpt->{text} = $args{lines}->[$_];
+                    $brkpt->{'line'} = $_;
+                    $brkpt->{'text'} = $args{lines}->[$_];
                     push @retList, $brkpt;
                     $found = 1;
                     last PRIOR_POSITION;
@@ -291,11 +291,11 @@ sub fix_breakpoints {
 
         # Oh well...
         if (not $found) {
-            my $text = $brkpt->{text};
+            my $text = $brkpt->{'text'};
             chomp $text;
             push @brkpt_fixed_msg,
                 (
-                "Breakpoint $args{fname} (line $brkpt->{line})",
+                "Breakpoint $args{fname} (line $brkpt->{'line'})",
                 " for statement [$text]",
                 " is lost due to code changes.",
                 q()
@@ -357,14 +357,14 @@ sub restore_breakpoints_from_save {
             lines  => $lines
         );
         for my $brkpt (@newList) {
-            if (!DB::is_line_breakable($fname, $brkpt->{line} + $offset)) {
+            if (!DB::is_line_breakable($fname, $brkpt->{'line'} + $offset)) {
                 Devel::ptkdb::obj()->do_alert(
                     title => 'Breakpoint Restore',
-                    msg   => "Breakpoint $fname:$brkpt->{line} in config file is not breakable."
+                    msg   => "Breakpoint $fname:$brkpt->{'line'} in config file is not breakable."
                 );
                 next;
             }
-            $breakpoints->{ $brkpt->{line} } = { %{$brkpt} };
+            $breakpoints->{ $brkpt->{'line'} } = { %{$brkpt} };
         }
     }
 
@@ -535,9 +535,9 @@ sub breakPointEvalExpr {
     my ($brkpt, $package) = @_;
     my (@result);
 
-    return 1 unless $brkpt->{expr};    # return if there is no expression
+    return 1 unless $brkpt->{'expr'};    # return if there is no expression
 
-    no strict;                         ## no critic TestingAndDebugging::ProhibitNoStrict
+    no strict;                           ## no critic TestingAndDebugging::ProhibitNoStrict
 
     @result = &DB::dbeval($package, $brkpt->{'expr'});
 
@@ -546,9 +546,9 @@ sub breakPointEvalExpr {
 
     $ptkdb_obj->do_alert(msg => $@) if $@;
 
-    return ($result[0] or @result);    # we could have a case where the 1st
-                                       # element is undefined but subsequent
-                                       # elements are defined
+    return ($result[0] or @result);      # we could have a case where the 1st
+                                         # element is undefined but subsequent
+                                         # elements are defined
 
 }
 
@@ -666,7 +666,7 @@ sub DB {
         }
 
         $ptkdb_obj->focus_debugger_command_widget();
-        $ptkdb_obj->{main_window}->focus();
+        $ptkdb_obj->{'main_window'}->focus();
 
         $ptkdb_obj->set_file($filename, $line);
         #
@@ -687,7 +687,7 @@ sub DB {
         #
         $ptkdb_obj->refresh_stack_menu();
 
-        $ptkdb_obj->{run_flag} = 1;
+        $ptkdb_obj->{'run_flag'} = 1;
 
         my ($evt, @result, $r);
 
@@ -738,7 +738,7 @@ sub DB {
                     next;
                 }
 
-                @result = &DB::dbeval($package, $ptkdb_obj->{expr});
+                @result = &DB::dbeval($package, $ptkdb_obj->{'expr'});
 
                 if (@result == 1) {
                     $r = $ptkdb_obj->insertExpr(

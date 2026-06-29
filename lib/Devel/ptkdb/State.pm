@@ -32,8 +32,8 @@ sub new {
     my ($class, %args) = @_;
 
     my $self = bless {}, $class;
-    $self->{ptkdb_obj}       = $args{ptkdb_obj};
-    $self->{state_file_name} = $self->default_state_file_name();
+    $self->{'ptkdb_obj'}       = $args{ptkdb_obj};
+    $self->{'state_file_name'} = $self->default_state_file_name();
     return $self;
 }
 
@@ -49,7 +49,7 @@ sub default_state_file_name {
     if (!-e $script) {
         if (!-w dirname($script)) {
             my $cwd = getcwd();
-            $self->{ptkdb_obj}->do_alert(msg =>
+            $self->{'ptkdb_obj'}->do_alert(msg =>
                     "'$script' is not writable. Assuming you are debugging a file you do not own. Defaulting to current directory '$cwd'."
             );
             $script = File::Spec->catfile($cwd, basename($script));
@@ -60,22 +60,22 @@ sub default_state_file_name {
 
 sub state_file_name {
     my ($self, $name) = @_;
-    $self->{state_file_name} = $name if @_ > 1 && defined $name && length $name;
-    return $self->{state_file_name};
+    $self->{'state_file_name'} = $name if @_ > 1 && defined $name && length $name;
+    return $self->{'state_file_name'};
 }
 
 sub current_state {
     my ($self) = @_;
-    my $ptkdb_obj = $self->{ptkdb_obj};
+    my $ptkdb_obj = $self->{'ptkdb_obj'};
 
     my $eval_saved_text
-        = exists $ptkdb_obj->{eval_window}
-        ? $ptkdb_obj->{eval_text}->get('0.0', 'end')
-        : $ptkdb_obj->{eval_saved_text};
+        = exists $ptkdb_obj->{'eval_window'}
+        ? $ptkdb_obj->{'eval_text'}->get('0.0', 'end')
+        : $ptkdb_obj->{'eval_saved_text'};
 
     my $code_pane_size;
-    if (my $frame = $ptkdb_obj->{code_frame}) {
-        my $side = $ptkdb_obj->{code_side} // 'left';
+    if (my $frame = $ptkdb_obj->{'code_frame'}) {
+        my $side = $ptkdb_obj->{'code_side'} // 'left';
         $code_pane_size
             = ($side eq 'left' || $side eq 'right')
             ? $frame->width
@@ -85,10 +85,10 @@ sub current_state {
     return {
         version           => $S{state_api_version},
         files             => DB::breakpoint_state(),
-        expr_list         => $ptkdb_obj->{expr_list},
+        expr_list         => $ptkdb_obj->{'expr_list'},
         eval_saved_text   => $eval_saved_text,
-        main_win_geometry => $ptkdb_obj->{main_window}
-        ? $ptkdb_obj->{main_window}->geometry
+        main_win_geometry => $ptkdb_obj->{'main_window'}
+        ? $ptkdb_obj->{'main_window'}->geometry
         : undef,
         code_pane_size => $code_pane_size,
     };
@@ -98,39 +98,39 @@ sub apply_state {
     my ($self, $state) = @_;
     return unless $state;
 
-    my $ptkdb_obj = $self->{ptkdb_obj};
+    my $ptkdb_obj = $self->{'ptkdb_obj'};
 
-    DB::restore_breakpoint_state($state->{files});
+    DB::restore_breakpoint_state($state->{'files'});
 
-    my $save_cur_file = $ptkdb_obj->{current_file};
+    my $save_cur_file = $ptkdb_obj->{'current_file'};
 
-    $ptkdb_obj->{current_file}    = "";
-    $ptkdb_obj->{expr_list}       = $state->{expr_list} if exists $state->{expr_list};
-    $ptkdb_obj->{eval_saved_text} = $state->{eval_saved_text};
+    $ptkdb_obj->{'current_file'}    = "";
+    $ptkdb_obj->{'expr_list'}       = $state->{'expr_list'} if exists $state->{'expr_list'};
+    $ptkdb_obj->{'eval_saved_text'} = $state->{'eval_saved_text'};
 
-    $ptkdb_obj->set_file($save_cur_file, $ptkdb_obj->{current_line});
+    $ptkdb_obj->set_file($save_cur_file, $ptkdb_obj->{'current_line'});
 
-    if ($state->{main_win_geometry} && $ptkdb_obj->{main_window}) {
-        $ptkdb_obj->{main_window}->geometry($state->{main_win_geometry});
+    if ($state->{'main_win_geometry'} && $ptkdb_obj->{'main_window'}) {
+        $ptkdb_obj->{'main_window'}->geometry($state->{'main_win_geometry'});
     }
 
-    if ($state->{code_pane_size} && $ptkdb_obj->{code_frame}) {
-        my $frame = $ptkdb_obj->{code_frame};
-        my $size  = $state->{code_pane_size};
-        my $side  = $ptkdb_obj->{code_side} // 'left';
+    if ($state->{'code_pane_size'} && $ptkdb_obj->{'code_frame'}) {
+        my $frame = $ptkdb_obj->{'code_frame'};
+        my $size  = $state->{'code_pane_size'};
+        my $side  = $ptkdb_obj->{'code_side'} // 'left';
         my $dim   = ($side eq 'left' || $side eq 'right') ? '-width' : '-height';
         if ($frame->ismapped) {
             # Window already up (e.g. manual reload): afterIdle is enough.
-            $ptkdb_obj->{main_window}->afterIdle(sub { $frame->configure($dim => $size) });
+            $ptkdb_obj->{'main_window'}->afterIdle(sub { $frame->configure($dim => $size) });
         } else {
             # Startup: the Adjuster's Mapped callback hasn't fired yet. Store
             # the desired size for EnterActions() to apply after forcing the
             # window to map and settle via update().
-            $ptkdb_obj->{pending_code_pane_size} = { dim => $dim, size => $size };
+            $ptkdb_obj->{'pending_code_pane_size'} = { dim => $dim, size => $size };
         }
     }
 
-    $ptkdb_obj->{event} = 'update';
+    $ptkdb_obj->{'event'} = 'update';
 }
 
 sub write_state_file {
@@ -156,9 +156,9 @@ sub read_state_file {
     my $state = do $state_file_name;
     if (   not ref($state)
         or ref($state) ne 'HASH'
-        or not exists $state->{version}
-        or $state->{version} ne $S{state_api_version}) {
-        $self->{ptkdb_obj}->do_alert(msg =>
+        or not exists $state->{'version'}
+        or $state->{'version'} ne $S{state_api_version}) {
+        $self->{'ptkdb_obj'}->do_alert(msg =>
                 "State file $state_file_name format does not match the current format. Not loading, Please re-establish your breakpoints, variable watches, etc. and save a new version."
         );
         return {};
@@ -205,8 +205,8 @@ sub restore_state_file {
 sub choose_state_file {
     my ($self, %args) = @_;
 
-    my $ptkdb_obj       = $self->{ptkdb_obj};
-    my $main_window     = $ptkdb_obj->{main_window};
+    my $ptkdb_obj       = $self->{'ptkdb_obj'};
+    my $main_window     = $ptkdb_obj->{'main_window'};
     my $state_file_name = $args{initial} || $self->state_file_name();
     my $initial_dir     = dirname($state_file_name);
     my $initial_file    = basename($state_file_name);
@@ -239,7 +239,7 @@ sub choose_state_file {
 sub save_state_callback {
     my ($self, $name_in) = @_;
 
-    my $ptkdb_obj = $self->{ptkdb_obj};
+    my $ptkdb_obj = $self->{'ptkdb_obj'};
 
     my $chosen = $self->choose_state_file(
         mode    => 'save',
@@ -256,7 +256,7 @@ sub save_state_callback {
 sub restore_state_callback {
     my ($self, $name_in) = @_;
 
-    my $ptkdb_obj = $self->{ptkdb_obj};
+    my $ptkdb_obj = $self->{'ptkdb_obj'};
 
     my $chosen = $self->choose_state_file(
         mode    => 'open',
