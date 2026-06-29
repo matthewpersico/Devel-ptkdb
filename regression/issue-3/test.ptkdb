@@ -1,49 +1,7 @@
 ## no critic (TestingAndDebugging::RequireUseStrict)
 $ptkdb_state = {
-                 'files' => {
-                              'blib/lib/Devel/ptkdb.pm' => [
-                                                             {
-                                                               'value' => '1',
-                                                               'text' => '    my %args;
-',
-                                                               'fname' => 'blib/lib/Devel/ptkdb.pm',
-                                                               'type' => 'user',
-                                                               'expr' => undef,
-                                                               'line' => 126
-                                                             },
-                                                             {
-                                                               'expr' => undef,
-                                                               'line' => 1512,
-                                                               'type' => 'user',
-                                                               'fname' => 'blib/lib/Devel/ptkdb.pm',
-                                                               'text' => '    my $summy  = 6;
-',
-                                                               'value' => '1'
-                                                             }
-                                                           ],
-                              'regression/issue-3/test.pl' => [
-                                                                {
-                                                                  'type' => 'user',
-                                                                  'expr' => undef,
-                                                                  'line' => 10,
-                                                                  'value' => '1',
-                                                                  'fname' => 'regression/issue-3/test.pl',
-                                                                  'text' => 'my $h     = { 43, 23 };
-'
-                                                                },
-                                                                {
-                                                                  'type' => 'user',
-                                                                  'expr' => undef,
-                                                                  'line' => 12,
-                                                                  'value' => '1',
-                                                                  'fname' => 'regression/issue-3/test.pl',
-                                                                  'text' => 'my %h     = (
-'
-                                                                }
-                                                              ]
-                            },
-                 'eval_saved_text' => undef,
-                 'main_win_geometry' => '1210x600+73+102',
+                 'code_pane_size' => 310,
+                 'main_win_geometry' => '1210x600+41+70',
                  'expr_list' => [
                                   {
                                     'expr' => '%h',
@@ -62,11 +20,45 @@ $ptkdb_state = {
                                     'expr' => '$a'
                                   },
                                   {
-                                    'expr' => '$b',
-                                    'depth' => -1
+                                    'depth' => -1,
+                                    'expr' => '$b'
                                   }
                                 ],
-                 'version' => '2.0.0'
+                 'eval_saved_text' => undef,
+                 'version' => '2.0.0',
+                 'files' => {
+                              'regression/issue-3/test.pl' => [
+                                                                {
+                                                                  'text' => 'my %h     = (
+',
+                                                                  'line' => 12,
+                                                                  'value' => '1',
+                                                                  'fname' => 'regression/issue-3/test.pl',
+                                                                  'expr' => undef,
+                                                                  'type' => 'user'
+                                                                },
+                                                                {
+                                                                  'text' => 'my $h     = { 43, 23 };
+',
+                                                                  'line' => 10,
+                                                                  'value' => '1',
+                                                                  'fname' => 'regression/issue-3/test.pl',
+                                                                  'expr' => undef,
+                                                                  'type' => 'user'
+                                                                }
+                                                              ],
+                              'blib/lib/Devel/ptkdb.pm' => [
+                                                             {
+                                                               'value' => '1',
+                                                               'fname' => 'blib/lib/Devel/ptkdb.pm',
+                                                               'type' => 'user',
+                                                               'expr' => undef,
+                                                               'line' => 144,
+                                                               'text' => '    my %args;
+'
+                                                             }
+                                                           ]
+                            }
                };
 
 return $ptkdb_state;  # prevents 'only used once' messages

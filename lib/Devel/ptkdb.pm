@@ -1901,6 +1901,8 @@ sub setup_frames {
     $frm->packPropagate(0);
     $code_scroller->packPropagate(0);
 
+    $self->{code_frame} = $frm;
+    $self->{code_side}  = $codeSide;
     $frm->packAdjust(-side => $codeSide, -fill => 'both', -expand => 1);
     $code_scroller->pack(-side => 'left', -fill => 'both', -expand => 1);
 
@@ -3364,6 +3366,15 @@ sub EnterActions {
     my ($self) = @_;
     # Don't know why it's commented out.
     #  $self->{'main_window'}->Unbusy() ;
+
+    if (my $pending = delete $self->{pending_code_pane_size}) {
+        # Force the window to map and let the Adjuster's Mapped callback
+        # (which calls slave_expand_off) fully settle before we apply the
+        # saved pane size. Without update() here, slave_expand_off runs
+        # later and overwrites our configure with the default width.
+        $self->{main_window}->update();
+        $self->{code_frame}->configure($pending->{dim} => $pending->{size});
+    }
 }
 
 # Subroutine called when we return from DB::DB(); when the target script

@@ -50,8 +50,10 @@ fi
 
 if (( ! opt_run_only )); then
     { perl Makefile.PL \
-        && make | grep -F -v '(unchanged)' \
-        && make test; } || exit
+          && echo \
+          && make | grep -F -v '(unchanged)' \
+          && echo \
+          && make test; } || exit
 fi
 
 declare -a cmd=(perl -Iblib/lib -Iblib/arch -Mblib -d:ptkdb regression/issue-3/test.pl)

@@ -73,6 +73,15 @@ sub current_state {
         ? $ptkdb_obj->{eval_text}->get('0.0', 'end')
         : $ptkdb_obj->{eval_saved_text};
 
+    my $code_pane_size;
+    if (my $frame = $ptkdb_obj->{code_frame}) {
+        my $side = $ptkdb_obj->{code_side} // 'left';
+        $code_pane_size
+            = ($side eq 'left' || $side eq 'right')
+            ? $frame->width
+            : $frame->height;
+    }
+
     return {
         version           => $S{state_api_version},
         files             => DB::breakpoint_state(),
@@ -81,6 +90,7 @@ sub current_state {
         main_win_geometry => $ptkdb_obj->{main_window}
         ? $ptkdb_obj->{main_window}->geometry
         : undef,
+        code_pane_size => $code_pane_size,
     };
 }
 
@@ -102,6 +112,22 @@ sub apply_state {
 
     if ($state->{main_win_geometry} && $ptkdb_obj->{main_window}) {
         $ptkdb_obj->{main_window}->geometry($state->{main_win_geometry});
+    }
+
+    if ($state->{code_pane_size} && $ptkdb_obj->{code_frame}) {
+        my $frame = $ptkdb_obj->{code_frame};
+        my $size  = $state->{code_pane_size};
+        my $side  = $ptkdb_obj->{code_side} // 'left';
+        my $dim   = ($side eq 'left' || $side eq 'right') ? '-width' : '-height';
+        if ($frame->ismapped) {
+            # Window already up (e.g. manual reload): afterIdle is enough.
+            $ptkdb_obj->{main_window}->afterIdle(sub { $frame->configure($dim => $size) });
+        } else {
+            # Startup: the Adjuster's Mapped callback hasn't fired yet. Store
+            # the desired size for EnterActions() to apply after forcing the
+            # window to map and settle via update().
+            $ptkdb_obj->{pending_code_pane_size} = { dim => $dim, size => $size };
+        }
     }
 
     $ptkdb_obj->{event} = 'update';
